@@ -35,6 +35,10 @@ DATASETS = {
         "url": "https://ukho-openmldata.s3.eu-west-2.amazonaws.com/SWED.zip",
         "filename": "SWED.zip",
         "source": "https://openmldata.ukho.gov.uk/",
+        "extra_files": [
+            {"url": "https://zenodo.org/records/13742222/files/swed_finetune.zip?download=1", "filename": "SWED_finetune.zip"},
+        ],
+        "convert_swed": True,
     },
     "SANet": {
         "url": "https://drive.google.com/uc?id=1IiV8IRJ06-qYVPbi6dGqiNxo4qJHyuJP",
@@ -106,6 +110,76 @@ def unzip_nested(dataset_dir):
                     zf.extractall(root)
                 os.remove(zip_path)
                 print(f"  Extracted to: {root}")
+
+
+# --- SWED conversion ---
+
+
+def convert_swed(dataset_dir, out_root):
+    """
+    Combine SWED image/label pairs into single (H, W, C+1) .npy files.
+
+    Train: image (256,256,12) .npy + label (1,256,256) .npy -> (256,256,13) .npy
+    Test:  image .tif + label .tif -> (256,256,13) .npy
+
+    Output is written flat into out_root/train/ and out_root/test/.
+    The original nested SWED/SWED/ source directory is removed on completion.
+    """
+    import shutil
+
+    import numpy as np
+
+    src_dir = os.path.join(dataset_dir, "SWED")  # nested SWED/SWED/
+
+    # --- train ---
+    print("\n  [train]")
+    train_img_dir = os.path.join(src_dir, "train", "images")
+    train_lbl_dir = os.path.join(src_dir, "train", "labels")
+    out_train = os.path.join(out_root, "train")
+    os.makedirs(out_train, exist_ok=True)
+
+    image_paths = sorted(glob.glob(os.path.join(train_img_dir, "*.npy")))
+    missing = []
+    for img_path in tqdm(image_paths, desc="train"):
+        stem = os.path.splitext(os.path.basename(img_path))[0]
+        lbl_name = stem.replace("_image_", "_chip_") + ".npy"
+        lbl_path = os.path.join(train_lbl_dir, lbl_name)
+        if not os.path.exists(lbl_path):
+            missing.append(lbl_path)
+            continue
+        image = np.load(img_path)                          # (256, 256, 12)
+        label = np.load(lbl_path).transpose(1, 2, 0)      # (1,256,256) -> (256,256,1)
+        combined = np.concatenate([image, label], axis=-1) # (256, 256, 13)
+        np.save(os.path.join(out_train, f"{stem}.npy"), combined)
+    if missing:
+        print(f"  Warning: {len(missing)} labels not found, skipped.")
+
+    # --- test ---
+    print("\n  [test]")
+    test_img_dir = os.path.join(src_dir, "test", "images")
+    test_lbl_dir = os.path.join(src_dir, "test", "labels")
+    out_test = os.path.join(out_root, "test")
+    os.makedirs(out_test, exist_ok=True)
+
+    image_paths = sorted(glob.glob(os.path.join(test_img_dir, "*.tif")))
+    missing = []
+    for img_path in tqdm(image_paths, desc="test"):
+        stem = os.path.splitext(os.path.basename(img_path))[0]
+        lbl_name = stem.replace("_image_", "_label_") + ".tif"
+        lbl_path = os.path.join(test_lbl_dir, lbl_name)
+        if not os.path.exists(lbl_path):
+            missing.append(lbl_path)
+            continue
+        image = _read_image(img_path)                      # (H, W, 12)
+        label = _read_image(lbl_path)                      # (H, W, 1)
+        combined = np.concatenate([image, label], axis=-1) # (H, W, 13)
+        np.save(os.path.join(out_test, f"{stem}.npy"), combined)
+    if missing:
+        print(f"  Warning: {len(missing)} labels not found, skipped.")
+
+    # Remove the nested source dir
+    shutil.rmtree(src_dir)
+    print(f"\n  Removed source dir: {src_dir}")
 
 
 # --- SANet .npy conversion ---
@@ -274,7 +348,11 @@ def process_dataset(name, config, save_path, todo):
         if config.get("unzip_nested"):
             print(f"\n[{name}] Extracting nested zips...")
             unzip_nested(dataset_dir)
-        if config.get("convert_npy"):
+        if config.get("convert_swed"):
+            print(f"\n[{name}] Converting to .npy (in-place) -> {dataset_dir}")
+            convert_swed(dataset_dir, dataset_dir)
+            summarise_dataset(name, dataset_dir)
+        elif config.get("convert_npy"):
             out_root = os.path.join(save_path, f"{name}_processed")
             print(f"\n[{name}] Converting to .npy -> {out_root}")
             if name == "SANet":
