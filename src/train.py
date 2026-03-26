@@ -64,6 +64,9 @@ def train_model(train_loader, valid_loader, args):
         weight_init=args.weight_init,
     )
     model = model.to(args.device)
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs.")
+        model = torch.nn.DataParallel(model)
 
     criterion = nn.BCEWithLogitsLoss() if args.binary_mask else nn.CrossEntropyLoss()
 
@@ -104,7 +107,8 @@ def train_model(train_loader, valid_loader, args):
         if valid_loss < min_loss:
             min_loss = valid_loss
             epochs_no_improve = 0
-            best_state_dict = copy.deepcopy(model.state_dict())
+            m = model.module if isinstance(model, torch.nn.DataParallel) else model
+            best_state_dict = copy.deepcopy(m.state_dict())
         else:
             epochs_no_improve += 1
 
