@@ -1,0 +1,30 @@
+# Core scientific
+numpy
+scipy
+pandas
+
+# Geospatial
+rasterio
+
+# ML
+torch
+torchvision
+pytorch-lightning
+timm
+transformers
+
+# Data / download
+requests
+tqdm
+gdown
+
+# Visualisation
+matplotlib
+seaborn
+scikit-image
+
+# Project dependencies
+spyndex
+xarray
+configilm
+lmdb
