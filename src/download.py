@@ -149,6 +149,7 @@ def convert_swed(dataset_dir, out_root):
             continue
         image = np.load(img_path)                          # (256, 256, 12)
         label = np.load(lbl_path).transpose(1, 2, 0)      # (1,256,256) -> (256,256,1)
+        label = np.clip(label, 0, 1)                       # map -1/-2 no-data -> 0
         combined = np.concatenate([image, label], axis=-1) # (256, 256, 13)
         np.save(os.path.join(out_train, f"{stem}.npy"), combined)
     if missing:
@@ -283,7 +284,51 @@ def convert_tcunet(dataset_dir, out_root):
             np.save(os.path.join(out_root, split, f"{stem}.npy"), combined)
 
 
-# --- Summary ---
+# --- Summary / sense check ---
+
+
+def sense_check(name, dataset_dir, max_sample=100):
+    """Sample up to max_sample .npy files per split and print shape and per-band min/max."""
+    import numpy as np
+
+    print(f"\n[{name}] Sense check (sample <= {max_sample} per split):")
+
+    if not os.path.exists(dataset_dir):
+        print("  Directory not found.")
+        return
+
+    splits = sorted([
+        d for d in os.listdir(dataset_dir)
+        if os.path.isdir(os.path.join(dataset_dir, d))
+    ])
+    if not splits:
+        splits = ["."]  # flat directory, no subdirs
+
+    for split in splits:
+        split_dir = os.path.join(dataset_dir, split) if split != "." else dataset_dir
+        paths = sorted(glob.glob(os.path.join(split_dir, "*.npy")))
+        if not paths:
+            continue
+
+        sample = paths[:max_sample]
+        arr = np.load(sample[0])
+        shape = arr.shape
+        n_bands = shape[-1] - 1
+
+        band_min = np.full(n_bands, np.inf)
+        band_max = np.full(n_bands, -np.inf)
+        mask_vals = set()
+
+        for p in sample:
+            arr = np.load(p).astype(np.float32)
+            band_min = np.minimum(band_min, arr[..., :n_bands].min(axis=(0, 1)))
+            band_max = np.maximum(band_max, arr[..., :n_bands].max(axis=(0, 1)))
+            mask_vals.update(np.unique(arr[..., -1]).tolist())
+
+        label = f"  [{split}]" if split != "." else "  "
+        print(f"{label} {len(paths)} files (sampled {len(sample)}) | shape {shape} | mask unique: {sorted(mask_vals)}")
+        for i in range(n_bands):
+            print(f"    band {i}: min={band_min[i]:.4f}  max={band_max[i]:.4f}")
 
 
 def summarise_dataset(name, dataset_dir):
@@ -351,7 +396,7 @@ def process_dataset(name, config, save_path, todo):
         if config.get("convert_swed"):
             print(f"\n[{name}] Converting to .npy (in-place) -> {dataset_dir}")
             convert_swed(dataset_dir, dataset_dir)
-            summarise_dataset(name, dataset_dir)
+            sense_check(name, dataset_dir)
         elif config.get("convert_npy"):
             out_root = os.path.join(save_path, f"{name}_processed")
             print(f"\n[{name}] Converting to .npy -> {out_root}")
@@ -359,9 +404,9 @@ def process_dataset(name, config, save_path, todo):
                 convert_sanet(dataset_dir, out_root)
             elif name == "TCUNet":
                 convert_tcunet(dataset_dir, out_root)
-            summarise_dataset(f"{name}_processed", out_root)
+            sense_check(f"{name}_processed", out_root)
         else:
-            summarise_dataset(name, dataset_dir)
+            sense_check(name, dataset_dir)
 
 
 def main():
