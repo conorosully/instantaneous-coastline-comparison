@@ -1,7 +1,7 @@
 from scipy.ndimage import distance_transform_edt
 
 import numpy as np
-from src import utils
+import utils
 
 def confusion_metrics(pred, target):
     """Returns confusion matrix metrics"""

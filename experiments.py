@@ -98,7 +98,7 @@ def exp1_architectures(train_path, save_path):
 
 def exp2_augmentations(finetune_path, save_path):
     """
-    UNet × all augmentation types × all optimizers × both loss functions.
+    UNet × all augmentation types × on adam × both loss functions.
     Trained on the LICS finetuning set.
     """
     print("\n" + "=" * 65)
@@ -106,7 +106,7 @@ def exp2_augmentations(finetune_path, save_path):
     print("=" * 65)
 
     augmentations = ["none", "geometric", "gaussian_noise", "salt_pepper", "contrast", "combined"]
-    optimizers    = ["adam", "adamw", "sgd"]
+    optimizers    = ["adam"]
 
     for aug in augmentations:
         for opt in optimizers:
@@ -138,17 +138,81 @@ def exp3_encoders(train_path, save_path):
 
     for encoder in encoders:
         for pretrain in pretrained:
-            model_name = f"LICS_{encoder}_{pretrain}"
+            model_name = f"LICS_{encoder}_{pretrain}_unfrozen"
             print(f"\n  {model_name}")
             run_experiment({
                 **_base(train_path, save_path),
-                "model_name":  model_name,
-                "model_type":  "unet",
-                "encoder":     encoder,
-                "pretrained":  pretrain,
-                "optimizer":   "adam",
-                "binary_mask": False,
+                "model_name":    model_name,
+                "model_type":    "unet",
+                "encoder":       encoder,
+                "pretrained":    pretrain,
+                "optimizer":     "adam",
+                "binary_mask":   False,
+                "freeze_encoder": False,
             })
+
+
+# ---------------------------------------------------------
+# Experiment 4 — Frozen pretrained encoder comparison
+# ---------------------------------------------------------
+
+def exp4_frozen_encoders(train_path, save_path):
+    """
+    Same as Experiment 3 but with frozen encoder weights.
+    UNet × ResNet encoders × pretrained weights. Optimizer: Adam.
+    Trained on the LICS training set.
+    """
+    print("\n" + "=" * 65)
+    print("Experiment 4: Frozen Pretrained Encoder Comparison")
+    print("=" * 65)
+
+    encoders   = ["resnet18", "resnet50", "resnet101"]
+    pretrained = ["imagenet", "bigearthnet"]
+
+    for encoder in encoders:
+        for pretrain in pretrained:
+            model_name = f"LICS_{encoder}_{pretrain}_frozen"
+            print(f"\n  {model_name}")
+            run_experiment({
+                **_base(train_path, save_path),
+                "model_name":    model_name,
+                "model_type":    "unet",
+                "encoder":       encoder,
+                "pretrained":    pretrain,
+                "optimizer":     "adam",
+                "binary_mask":   False,
+                "freeze_encoder": True,
+            })
+
+
+# ---------------------------------------------------------
+# Experiment 5 — Dataset comparison
+# ---------------------------------------------------------
+
+def exp5_datasets(scratch_path, save_path):
+    """
+    UNet + Adam across SWED, SANet, and TCNet datasets.
+    Trained on each dataset's training set.
+    """
+    print("\n" + "=" * 65)
+    print("Experiment 5: Dataset Comparison")
+    print("=" * 65)
+
+    datasets = [
+        ("SWED",             os.path.join(scratch_path, "SWED",             "train")),
+        ("SANet_processed",  os.path.join(scratch_path, "SANet_processed",  "train")),
+        ("TCUNet_processed", os.path.join(scratch_path, "TCUNet_processed", "train")),
+    ]
+
+    for dataset, dataset_train_path in datasets:
+        model_name = f"{dataset}_unet_adam"
+        print(f"\n  {model_name}")
+        run_experiment({
+            **_base(dataset_train_path, save_path),
+            "model_name": model_name,
+            "model_type": "unet",
+            "optimizer":  "adam",
+        })
 
 
 # ---------------------------------------------------------
@@ -161,14 +225,19 @@ def main():
                         help="Path to LICS training data (.npy files)")
     parser.add_argument("--finetune_path", type=str, default=None,
                         help="Path to LICS finetuning data (required for experiment 2)")
+    parser.add_argument("--scratch_path",  type=str, default=None,
+                        help="Path to scratch directory containing SWED, SANet_processed, TCUNet_processed (required for experiment 5)")
     parser.add_argument("--save_path",     type=str, required=True,
                         help="Directory to save models and configs")
-    parser.add_argument("--experiment",    type=int, choices=[1, 2, 3], default=None,
-                        help="Run a specific experiment (1, 2, or 3). Omit to run all.")
+    parser.add_argument("--experiment",    type=int, choices=[1, 2, 3, 4, 5], default=None,
+                        help="Run a specific experiment (1-5). Omit to run all.")
     args = parser.parse_args()
 
     if args.experiment in (None, 2) and args.finetune_path is None:
         parser.error("--finetune_path is required for experiment 2")
+
+    if args.experiment in (None, 5) and args.scratch_path is None:
+        parser.error("--scratch_path is required for experiment 5")
 
     os.makedirs(args.save_path, exist_ok=True)
 
@@ -182,6 +251,12 @@ def main():
 
     if run_all or args.experiment == 3:
         exp3_encoders(args.train_path, args.save_path)
+
+    if run_all or args.experiment == 4:
+        exp4_frozen_encoders(args.train_path, args.save_path)
+
+    if run_all or args.experiment == 5:
+        exp5_datasets(args.scratch_path, args.save_path)
 
 
 if __name__ == "__main__":
