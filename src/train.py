@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 
 from network import get_model
 from dataset import TrainDataset
+from utils import training_data_check
 
 
 # ---------------------------------------------------------
@@ -24,6 +25,7 @@ from dataset import TrainDataset
 def load_data(args):
     train_paths = glob.glob(os.path.join(args.train_path, "*.npy"))
     print(f"Total training images: {len(train_paths)}")
+    training_data_check(train_paths, args)
 
     if args.sample:
         train_paths = train_paths[:100]

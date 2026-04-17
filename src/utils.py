@@ -110,6 +110,43 @@ def get_index(bands, index="MNDWI",satellite='sentinel'):
 # Dataset inspection
 # ---------------------------------------------------------
 
+def training_data_check(paths, args, n_sample=50):
+    """Sense-check band scaling and mask values on a sample of training files."""
+    rng = np.random.default_rng(42)
+    sample = rng.choice(len(paths), size=min(n_sample, len(paths)), replace=False)
+
+    band_min = None
+    band_max = None
+    mask_vals = set()
+
+    for i in sample:
+        arr = np.load(paths[i])
+        bands = arr[:, :, args.incl_bands].astype(np.float32)
+        bands = scale_bands(bands, args.satellite)
+        mask = arr[:, :, args.target_pos]
+        if band_min is None:
+            band_min = bands.min(axis=(0, 1))
+            band_max = bands.max(axis=(0, 1))
+        else:
+            band_min = np.minimum(band_min, bands.min(axis=(0, 1)))
+            band_max = np.maximum(band_max, bands.max(axis=(0, 1)))
+        mask_vals.update(np.unique(mask).tolist())
+
+    n_bands = len(args.incl_bands)
+    sat_bands = list(band_dic.get(args.satellite, {}).keys())
+    names = [sat_bands[i] for i in args.incl_bands] if sat_bands else [f"band_{i}" for i in args.incl_bands]
+
+    print(f"  Satellite: {args.satellite} | bands ({n_bands}): {names}")
+    scale_ok = all(band_min[i] >= -0.01 and band_max[i] <= 1.01 for i in range(n_bands))
+    print(f"  Scaled band min/max ({'OK' if scale_ok else 'WARNING out of [0,1]'}):")
+    for i in range(n_bands):
+        flag = "" if -0.01 <= band_min[i] and band_max[i] <= 1.01 else "  <- out of range"
+        print(f"    {names[i]}: [{band_min[i]:.4f}, {band_max[i]:.4f}]{flag}")
+    mask_ok = mask_vals <= {0, 1}
+    extra = mask_vals - {0, 1}
+    print(f"  Target unique values: {sorted(mask_vals)} ({'OK' if mask_ok else f'WARNING unexpected: {extra}'})")
+
+
 def dataset_summary(paths, satellite, split_name=""):
     """Print basic info about a set of .npy files (count, shape, per-band min/max)."""
     n = len(paths)

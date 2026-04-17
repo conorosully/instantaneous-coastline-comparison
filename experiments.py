@@ -199,12 +199,15 @@ def exp5_datasets(scratch_path, save_path):
     print("=" * 65)
 
     datasets = [
-        ("SWED",             os.path.join(scratch_path, "SWED",             "train")),
-        ("SANet_processed",  os.path.join(scratch_path, "SANet_processed",  "train")),
-        ("TCUNet_processed", os.path.join(scratch_path, "TCUNet_processed", "train")),
+        ("SWED",             os.path.join(scratch_path, "SWED",             "train"),
+            {"satellite": "sentinel"}),
+        ("SANet_processed",  os.path.join(scratch_path, "SANet_processed",  "train"),
+            {"incl_bands": "[1,2,3,4]", "target_pos": -1, "satellite": "gaofen1"}),
+        ("TCUNet_processed", os.path.join(scratch_path, "TCUNet_processed", "train"),
+            {"incl_bands": "[1,2,3,4,5,6,7,8]", "target_pos": -1, "satellite": "gaofen6"}),
     ]
 
-    for dataset, dataset_train_path in datasets:
+    for dataset, dataset_train_path, overrides in datasets:
         model_name = f"{dataset}_unet_adam"
         print(f"\n  {model_name}")
         run_experiment({
@@ -212,6 +215,7 @@ def exp5_datasets(scratch_path, save_path):
             "model_name": model_name,
             "model_type": "unet",
             "optimizer":  "adam",
+            **overrides,
         })
 
 
