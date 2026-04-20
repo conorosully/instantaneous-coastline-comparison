@@ -9,7 +9,7 @@ rasterio
 # ML
 torch
 torchvision
-pytorch-lightning
+lightning
 timm
 transformers
 

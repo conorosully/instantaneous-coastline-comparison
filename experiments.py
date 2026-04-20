@@ -200,7 +200,7 @@ def exp5_datasets(scratch_path, save_path):
 
     datasets = [
         ("SWED",             os.path.join(scratch_path, "SWED",             "train"),
-            {"satellite": "sentinel"}),
+            {"satellite": "sentinel", "batch_size": 8}),
         ("SANet_processed",  os.path.join(scratch_path, "SANet_processed",  "train"),
             {"incl_bands": "[1,2,3,4]", "target_pos": -1, "satellite": "gaofen1"}),
         ("TCUNet_processed", os.path.join(scratch_path, "TCUNet_processed", "train"),
