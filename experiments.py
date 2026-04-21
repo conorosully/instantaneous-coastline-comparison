@@ -200,11 +200,11 @@ def exp5_datasets(scratch_path, save_path):
 
     datasets = [
         ("SWED",             os.path.join(scratch_path, "SWED",             "train"),
-            {"satellite": "sentinel", "batch_size": 8}),
+            {"incl_bands": "[1,2,3,4,5,6,7,8,9,10,11,12]","satellite": "sentinel", "batch_size": 8}),
         ("SANet_processed",  os.path.join(scratch_path, "SANet_processed",  "train"),
             {"incl_bands": "[1,2,3,4]", "target_pos": -1, "satellite": "gaofen1"}),
         ("TCUNet_processed", os.path.join(scratch_path, "TCUNet_processed", "train"),
-            {"incl_bands": "[1,2,3,4,5,6,7,8]", "target_pos": -1, "satellite": "gaofen6"}),
+            {"incl_bands": "[1,2,3,4,5,6,7,8]", "target_pos": -1, "satellite": "gaofen6", "batch_size": 8}),
     ]
 
     for dataset, dataset_train_path, overrides in datasets:
