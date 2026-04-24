@@ -1,10 +1,15 @@
 
+import os
+import glob
 import numpy as np
 import spyndex
 import xarray as xr
+import PIL
+from PIL import Image, ImageEnhance
 
 from skimage.filters import threshold_otsu
 from dataset import scale_bands
+
 
 band_dic = {
     "sentinel": {"coastal":0,"blue":1,"green":2,"red":3,"rededge1":4,"rededge2":5,"rededge3":6,"nir":7,"narrownir":8,"watervapour":9,"swir1":10,"swir2":11},
@@ -42,16 +47,15 @@ def edge_from_mask(mask):
 
     return edge
 
-def get_threshold(index,threshold):
-    """Get NDWI threshold predcition"""
-    img = index.copy()
+def get_threshold(index, threshold):
+    """Get NDWI threshold prediction"""
+    img = np.nan_to_num(index.copy(), nan=0.0)
 
     if threshold == 'otsu':
         threshold = threshold_otsu(img)
 
-    """Threshold an image"""
     img[img >= threshold] = 1
-    img[img < threshold] = 0 
+    img[img < threshold] = 0
     return img
 
 
@@ -104,6 +108,74 @@ def get_index(bands, index="MNDWI",satellite='sentinel'):
     idx = np.array(idx)
 
     return idx
+
+
+def predict_index(bands, satellite, index="MNDWI", threshold="otsu"):
+    """
+    Predict a binary water mask from raw spectral bands using an index + threshold.
+
+    bands     : (H, W, C) numpy array of raw (unscaled) band values
+    satellite : "landsat" | "sentinel" | "gaofen1" | "gaofen6"
+    index     : any spyndex-supported index name (default "MNDWI")
+    threshold : "otsu" for Otsu's method, or a float for a fixed cutoff
+
+    Returns: (H, W) uint8 array — 1 = water, 0 = land
+    """
+    idx  = get_index(bands, index=index, satellite=satellite)
+    mask = get_threshold(idx, threshold=threshold)
+    return mask.astype(np.uint8)
+
+
+# ---------------------------------------------------------
+# Dataset loading
+# ---------------------------------------------------------
+
+DATASET_CONFIG = {
+    "LICS":             {"incl_bands": [0,1,2,3,4,5,6],             "target_pos": -2, "satellite": "landsat"},
+    "SWED":             {"incl_bands": [0,1,2,3,4,5,6,7,8,9,10,11], "target_pos": -1, "satellite": "sentinel"},
+    "SANet_processed":  {"incl_bands": [0,1,2,3],                    "target_pos": -1, "satellite": "gaofen1"},
+    "TCUNet_processed": {"incl_bands": [0,1,2,3,4,5,6,7],           "target_pos": -1, "satellite": "gaofen6"},
+}
+
+
+def load_dataset(name, path):
+    """
+    Load inputs and targets for a dataset split.
+
+    name : dataset name — one of DATASET_CONFIG keys
+    path : directory containing .npy files
+
+    Returns: inputs  — list of (H, W, C) raw band arrays
+             targets — list of (H, W) int mask arrays
+             satellite — satellite string for this dataset
+    """
+    cfg        = DATASET_CONFIG[name]
+    incl_bands = cfg["incl_bands"]
+    target_pos = cfg["target_pos"]
+
+    files = sorted(glob.glob(os.path.join(path, "*.npy")))
+    data  = [np.load(f) for f in files]
+
+    inputs  = [d[:, :, incl_bands] for d in data]
+    targets = [np.where(d[:, :, target_pos] == -1, 0, d[:, :, target_pos]).astype(int) for d in data]
+
+    return inputs, targets, cfg["satellite"]
+
+
+def load_all_datasets(paths):
+    """
+    Load inputs and targets for multiple datasets in one call.
+
+    paths : dict mapping dataset name to its directory path
+            e.g. {"LICS": "../../data/LICS/test",
+                  "SWED": "../data/SWED/test", ...}
+
+    Returns: dict {name: {"inputs": [...], "targets": [...], "satellite": "..."}}
+    """
+    return {
+        name: dict(zip(("inputs", "targets", "satellite"), load_dataset(name, path)))
+        for name, path in paths.items()
+    }
 
 
 # ---------------------------------------------------------
@@ -235,3 +307,41 @@ def show_examples(paths, n=4, satellite="gaofen1", rgb_bands=None,
 
     plt.tight_layout()
     plt.show()
+
+# ---------------------------------------------------------
+# Data visualization
+# ---------------------------------------------------------
+
+def get_rgb(img, r=2,g=1,b=0, contrast=1,satellite='sentinel'):
+    """Convert a stacked array of bands to RGB"""
+
+    if img.shape[0] > img.shape[2]:
+        #  H x W x B -> B x H x W
+        img = np.transpose(img, (2,0,1))
+
+    r = img[r]
+    g = img[g]
+    b = img[b]
+
+    rgb = np.stack([r, g, b], axis=-1)
+    rgb = rgb.astype(np.float32)
+
+    rgb = scale_bands(rgb, satellite=satellite)
+    rgb = np.clip(rgb, 0, contrast) / contrast
+
+    # convert to 255
+    rgb = (rgb * 255).astype(np.uint8) 
+
+    return rgb
+
+def enhance_rgb(rgb_array,factor=1.5):
+    """Enhance the RGB image."""
+    
+    RGB = PIL.Image.fromarray(rgb_array)
+
+    converter = ImageEnhance.Color(RGB)
+
+    RGB = converter.enhance(factor)
+    RGB = np.array(RGB)
+
+    return RGB

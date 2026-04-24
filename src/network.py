@@ -537,3 +537,49 @@ def get_model(encoder, model_type, in_channels, output_channels,
         freeze_encoder=freeze_encoder,
         use_attention=use_attention,
     )
+
+
+def load_model(model_name, models_dir, device=None):
+    """
+    Load a saved model by name and return (model, config).
+
+    model_name : filename stem, e.g. "LICS_unet_adam"
+    models_dir : directory containing the .pth and .json files
+    device     : torch device string/object; defaults to cuda > mps > cpu
+    """
+    import json, os
+
+    if device is None:
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+
+    json_path = os.path.join(models_dir, f"{model_name}.json")
+    pth_path  = os.path.join(models_dir, f"{model_name}.pth")
+
+    with open(json_path) as f:
+        config = json.load(f)
+
+    in_channels  = len(config["incl_bands"])
+    out_channels = 1 if config.get("binary_mask", False) else 2
+    # Use pretrained="none" to avoid re-downloading backbone weights —
+    # the .pth already contains all final weights which are loaded below.
+    model = get_model(
+        encoder         = config["encoder"],
+        model_type      = config["model_type"],
+        in_channels     = in_channels,
+        output_channels = out_channels,
+        pretrained      = "none",
+        freeze_encoder  = False,
+        weight_init     = config.get("weight_init", "normal"),
+    )
+
+    state = torch.load(pth_path, map_location=device)
+    model.load_state_dict(state)
+    model.to(device)
+    model.eval()
+
+    return model, config
