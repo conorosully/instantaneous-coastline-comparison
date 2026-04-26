@@ -154,7 +154,7 @@ def _exp1_sweep(dataset, train_path, save_path, overrides):
         })
 
 
-def exp1_datasets(train_path, scratch_path, save_path, sanet_valid_path=None):
+def exp1_datasets(train_path, scratch_path, save_path):
     """Experiment 1: UNet hyperparameter sweep across all four datasets."""
     print("\n" + "=" * 65)
     print("Experiment 1: Multi-Dataset Hyperparameter Sweep")
@@ -171,15 +171,15 @@ def exp1_datasets(train_path, scratch_path, save_path, sanet_valid_path=None):
         overrides={"incl_bands": "[1,2,3,4,5,6,7,8,9,10,11,12]", "satellite": "sentinel", "batch_size": 8},
     )
 
-    # SANet_processed — Gaofen-1, 4 bands; uses separate validation set if provided
-    sanet_overrides = {"incl_bands": "[1,2,3,4]", "target_pos": -1, "satellite": "gaofen1"}
-    if sanet_valid_path is not None:
-        sanet_overrides["valid_path"] = sanet_valid_path
+    # SANet_processed — Gaofen-1, 4 bands; uses separate validation set
     _exp1_sweep(
         "SANet_processed",
         os.path.join(scratch_path, "SANet_processed", "train"),
         save_path,
-        overrides=sanet_overrides,
+        overrides={
+            "incl_bands": "[1,2,3,4]", "target_pos": -1, "satellite": "gaofen1",
+            "valid_path": os.path.join(scratch_path, "SANet_processed", "valid"),
+        },
     )
 
     # TCUNet_processed — Gaofen-6, 8 bands
@@ -435,8 +435,6 @@ def main():
                         help="Path to LICS finetuning data (required for experiment 3)")
     parser.add_argument("--scratch_path",  type=str, default=None,
                         help="Path to scratch directory containing SWED, SANet_processed, TCUNet_processed (required for experiment 1)")
-    parser.add_argument("--sanet_valid",   type=str, default=None,
-                        help="Path to SANet_processed validation set (uses random split if omitted)")
     parser.add_argument("--save_path",     type=str, default=None,
                         help="Directory to save models and configs")
     parser.add_argument("--experiment",    type=str,
@@ -493,7 +491,7 @@ def main():
     exp     = args.experiment
 
     if run_all or exp == "1":
-        exp1_datasets(args.train_path, args.scratch_path, args.save_path, args.sanet_valid)
+        exp1_datasets(args.train_path, args.scratch_path, args.save_path)
 
     if run_all or exp == "2":
         exp2_architectures(args.train_path, args.save_path)
