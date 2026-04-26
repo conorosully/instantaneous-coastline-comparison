@@ -45,7 +45,7 @@ def _base(train_path, save_path):
         weight_init      = "normal",
         optimizer        = "adam",
         lr               = [0.1, 0.01, 0.001],
-        batch_size       = 32,
+        batch_size       = 8,
         epochs           = 100,
         split            = 0.9,
         early_stopping   = 20,
@@ -100,30 +100,30 @@ def exp2_architectures(train_path, save_path):
 # Experiment 3 — Augmentation comparison
 # ---------------------------------------------------------
 
-def exp3_augmentations(finetune_path, save_path):
+def exp3_augmentations(dataset, finetune_path, save_path, overrides=None):
     """
-    UNet × all augmentation types × adam.
-    Trained on the LICS finetuning set.
+    UNet × all augmentation types × adam on a given dataset.
+    dataset   : dataset name prefix for model naming (e.g. "LICS", "SWED")
+    overrides : optional dict of config overrides (e.g. satellite, incl_bands)
     """
     print("\n" + "=" * 65)
-    print("Experiment 3: Augmentation Comparison")
+    print(f"Experiment 3: Augmentation Comparison — {dataset}")
     print("=" * 65)
 
     augmentations = ["none", "geometric", "gaussian_noise", "salt_pepper", "contrast", "combined"]
-    optimizers    = ["adam"]
 
     for aug in augmentations:
-        for opt in optimizers:
-            model_name = f"LICS_{aug}_{opt}"
-            print(f"\n  {model_name}")
-            run_experiment({
-                **_base(finetune_path, save_path),
-                "model_name":     model_name,
-                "augmentation":   aug,
-                "optimizer":      opt,
-                "split":          0.8,
-                "experiment_tag": 3,
-            })
+        model_name = f"{dataset}_{aug}_adam"
+        print(f"\n  {model_name}")
+        run_experiment({
+            **_base(finetune_path, save_path),
+            "model_name":     model_name,
+            "augmentation":   aug,
+            "optimizer":      "adam",
+            "split":          0.8,
+            "experiment_tag": 3,
+            **(overrides or {}),
+        })
 
 
 # ---------------------------------------------------------
@@ -168,7 +168,7 @@ def exp1_datasets(train_path, scratch_path, save_path):
         "SWED",
         os.path.join(scratch_path, "SWED", "train"),
         save_path,
-        overrides={"incl_bands": "[1,2,3,4,5,6,7,8,9,10,11,12]", "satellite": "sentinel", "batch_size": 8},
+        overrides={"incl_bands": "[1,2,3,4,5,6,7,8,9,10,11,12]", "satellite": "sentinel"},
     )
 
     # SANet_processed — Gaofen-1, 4 bands; uses separate validation set
@@ -187,7 +187,7 @@ def exp1_datasets(train_path, scratch_path, save_path):
         "TCUNet_processed",
         os.path.join(scratch_path, "TCUNet_processed", "train"),
         save_path,
-        overrides={"incl_bands": "[1,2,3,4,5,6,7,8]", "target_pos": -1, "satellite": "gaofen6", "batch_size": 8},
+        overrides={"incl_bands": "[1,2,3,4,5,6,7,8]", "target_pos": -1, "satellite": "gaofen6"},
     )
 
 
@@ -431,8 +431,10 @@ def main():
     parser = argparse.ArgumentParser(description="Run LICS segmentation experiments")
     parser.add_argument("--train_path",    type=str, default=None,
                         help="Path to LICS training data (.npy files)")
-    parser.add_argument("--finetune_path", type=str, default=None,
-                        help="Path to LICS finetuning data (required for experiment 3)")
+    parser.add_argument("--finetune_path",      type=str, default=None,
+                        help="Path to LICS finetuning data (experiment 3)")
+    parser.add_argument("--swed_finetune_path", type=str, default=None,
+                        help="Path to SWED finetuning data (experiment 3 SWED)")
     parser.add_argument("--scratch_path",  type=str, default=None,
                         help="Path to scratch directory containing SWED, SANet_processed, TCUNet_processed (required for experiment 1)")
     parser.add_argument("--save_path",     type=str, default=None,
@@ -480,8 +482,8 @@ def main():
 
     if needs_train and args.train_path is None:
         parser.error("--train_path is required for this experiment")
-    if args.experiment in (None, "3") and args.finetune_path is None:
-        parser.error("--finetune_path is required for experiment 3")
+    if args.experiment in (None, "3") and args.finetune_path is None and args.swed_finetune_path is None:
+        parser.error("--finetune_path and/or --swed_finetune_path is required for experiment 3")
     if needs_scratch and args.scratch_path is None:
         parser.error("--scratch_path is required for this experiment")
 
@@ -497,7 +499,13 @@ def main():
         exp2_architectures(args.train_path, args.save_path)
 
     if run_all or exp == "3":
-        exp3_augmentations(args.finetune_path, args.save_path)
+        if args.finetune_path:
+            exp3_augmentations("LICS", args.finetune_path, args.save_path)
+        if args.swed_finetune_path:
+            exp3_augmentations("SWED", args.swed_finetune_path, args.save_path,
+                               overrides={"satellite": "sentinel",
+                                          "incl_bands": "[1,2,3,4,5,6,7,8,9,10,11,12]",
+                                          "batch_size": 8})
 
 
 if __name__ == "__main__":
