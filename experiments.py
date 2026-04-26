@@ -477,7 +477,7 @@ def main():
     if args.save_path is None:
         parser.error("--save_path is required for training")
 
-    needs_train   = args.experiment in (None, "2", "3")
+    needs_train   = args.experiment in (None, "2")
     needs_scratch = args.experiment in (None, "1")
 
     if needs_train and args.train_path is None:
