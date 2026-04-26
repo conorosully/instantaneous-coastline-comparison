@@ -46,9 +46,10 @@ def _base(train_path, save_path):
         optimizer        = "adam",
         lr               = [0.1, 0.01, 0.001],
         batch_size       = 32,
-        epochs           = 50,
+        epochs           = 100,
         split            = 0.9,
-        early_stopping   = 10,
+        early_stopping   = 20,
+        early_stopping_min_delta = 1e-4,
         seed             = 42,
         augmentation     = "none",
         aug_noise_std    = 0.1,
@@ -66,16 +67,16 @@ def _base(train_path, save_path):
 
 
 # ---------------------------------------------------------
-# Experiment 1 — Architecture comparison
+# Experiment 2 — Architecture comparison
 # ---------------------------------------------------------
 
-def exp1_architectures(train_path, save_path):
+def exp2_architectures(train_path, save_path):
     """
-    All scratch architectures × all optimizers × both loss functions.
+    All scratch architectures × all optimizers.
     Trained on the LICS training set.
     """
     print("\n" + "=" * 65)
-    print("Experiment 1: Architecture Comparison")
+    print("Experiment 2: Architecture Comparison")
     print("=" * 65)
 
     architectures = ["unet", "r2_unet", "att_unet", "r2att_unet"]
@@ -87,23 +88,25 @@ def exp1_architectures(train_path, save_path):
             print(f"\n  {model_name}")
             run_experiment({
                 **_base(train_path, save_path),
-                "model_name": model_name,
-                "model_type": arch,
-                "optimizer":  opt,
+                "model_name":     model_name,
+                "model_type":     arch,
+                "optimizer":      opt,
+                "lr":             [0.1, 0.01, 0.001, 0.0001],
+                "experiment_tag": 2,
             })
 
 
 # ---------------------------------------------------------
-# Experiment 2 — Augmentation comparison
+# Experiment 3 — Augmentation comparison
 # ---------------------------------------------------------
 
-def exp2_augmentations(finetune_path, save_path):
+def exp3_augmentations(finetune_path, save_path):
     """
-    UNet × all augmentation types × on adam × both loss functions.
+    UNet × all augmentation types × adam.
     Trained on the LICS finetuning set.
     """
     print("\n" + "=" * 65)
-    print("Experiment 2: Augmentation Comparison")
+    print("Experiment 3: Augmentation Comparison")
     print("=" * 65)
 
     augmentations = ["none", "geometric", "gaussian_noise", "salt_pepper", "contrast", "combined"]
@@ -115,147 +118,72 @@ def exp2_augmentations(finetune_path, save_path):
             print(f"\n  {model_name}")
             run_experiment({
                 **_base(finetune_path, save_path),
-                "model_name":   model_name,
-                "augmentation": aug,
-                "optimizer":    opt,
+                "model_name":     model_name,
+                "augmentation":   aug,
+                "optimizer":      opt,
+                "split":          0.8,
+                "experiment_tag": 3,
             })
 
 
 # ---------------------------------------------------------
-# Experiment 3 — Pretrained encoder comparison
-# ---------------------------------------------------------
-
-def exp3_encoders(train_path, save_path):
-    """
-    UNet × ResNet encoders × pretrained weights. Optimizer: Adam, Loss: CrossEntropy.
-    Trained on the LICS training set.
-    """
-    print("\n" + "=" * 65)
-    print("Experiment 3: Pretrained Encoder Comparison")
-    print("=" * 65)
-
-    encoders   = ["resnet18", "resnet50", "resnet101"]
-    pretrained = ["imagenet", "bigearthnet"]
-
-    for encoder in encoders:
-        for pretrain in pretrained:
-            model_name = f"LICS_{encoder}_{pretrain}_unfrozen"
-            print(f"\n  {model_name}")
-            run_experiment({
-                **_base(train_path, save_path),
-                "model_name":    model_name,
-                "model_type":    "unet",
-                "encoder":       encoder,
-                "pretrained":    pretrain,
-                "optimizer":     "adam",
-                "binary_mask":   False,
-                "freeze_encoder": False,
-            })
-
-
-# ---------------------------------------------------------
-# Experiment 4 — Frozen pretrained encoder comparison
-# ---------------------------------------------------------
-
-def exp4_frozen_encoders(train_path, save_path):
-    """
-    Same as Experiment 3 but with frozen encoder weights.
-    UNet × ResNet encoders × pretrained weights. Optimizer: Adam.
-    Trained on the LICS training set.
-    """
-    print("\n" + "=" * 65)
-    print("Experiment 4: Frozen Pretrained Encoder Comparison")
-    print("=" * 65)
-
-    encoders   = ["resnet18", "resnet50", "resnet101"]
-    pretrained = ["imagenet", "bigearthnet"]
-
-    for encoder in encoders:
-        for pretrain in pretrained:
-            model_name = f"LICS_{encoder}_{pretrain}_frozen"
-            print(f"\n  {model_name}")
-            run_experiment({
-                **_base(train_path, save_path),
-                "model_name":    model_name,
-                "model_type":    "unet",
-                "encoder":       encoder,
-                "pretrained":    pretrain,
-                "optimizer":     "adam",
-                "binary_mask":   False,
-                "freeze_encoder": True,
-            })
-
-
-# ---------------------------------------------------------
-# Experiment 5 — Dataset comparison (sub-experiments 5a–5d)
+# Experiment 1 — Multi-dataset hyperparameter sweep
 #
-# Each sub-experiment sweeps:
-#   optimizers   : adam, adamw, sgd
-#   augmentations: none, geometric
-#   lr           : [0.1, 0.01, 0.001, 0.0001]
+# Sweep: optimizers (adam, adamw, sgd) × lr candidates
+#        (best lr picked automatically by _run_lr_sweep)
+# Datasets: LICS (Landsat), SWED (Sentinel-2),
+#           SANet_processed (Gaofen-1), TCUNet_processed (Gaofen-6)
 #
-# Model naming: {dataset}_unet_{aug}_{opt}
+# Model naming: {dataset}_unet_{opt}
 # ---------------------------------------------------------
 
-def _exp5_sweep(dataset, train_path, save_path, overrides):
-    optimizers    = ["adam", "adamw", "sgd"]
-    augmentations = ["none", "geometric"]
+def _exp1_sweep(dataset, train_path, save_path, overrides):
+    optimizers = ["adam", "adamw", "sgd"]
 
-    for aug in augmentations:
-        for opt in optimizers:
-            model_name = f"{dataset}_unet_{aug}_{opt}"
-            print(f"\n  {model_name}")
-            run_experiment({
-                **_base(train_path, save_path),
-                "model_name":   model_name,
-                "model_type":   "unet",
-                "optimizer":    opt,
-                "lr":           [0.1, 0.01, 0.001, 0.0001],
-                "augmentation": aug,
-                **overrides,
-            })
+    for opt in optimizers:
+        model_name = f"{dataset}_unet_{opt}"
+        print(f"\n  {model_name}")
+        run_experiment({
+            **_base(train_path, save_path),
+            "model_name":     model_name,
+            "model_type":     "unet",
+            "optimizer":      opt,
+            "lr":             [0.1, 0.01, 0.001, 0.0001],
+            "experiment_tag": 1,
+            **overrides,
+        })
 
 
-def exp5a_lics(train_path, save_path):
-    """Experiment 5a: UNet hyperparameter sweep on LICS (Landsat)."""
+def exp1_datasets(train_path, scratch_path, save_path, sanet_valid_path=None):
+    """Experiment 1: UNet hyperparameter sweep across all four datasets."""
     print("\n" + "=" * 65)
-    print("Experiment 5a: Dataset Comparison — LICS")
+    print("Experiment 1: Multi-Dataset Hyperparameter Sweep")
     print("=" * 65)
-    _exp5_sweep("LICS", train_path, save_path, overrides={})
 
+    # LICS — Landsat, 7 bands
+    _exp1_sweep("LICS", train_path, save_path, overrides={})
 
-def exp5b_swed(scratch_path, save_path):
-    """Experiment 5b: UNet hyperparameter sweep on SWED (Sentinel-2)."""
-    print("\n" + "=" * 65)
-    print("Experiment 5b: Dataset Comparison — SWED")
-    print("=" * 65)
-    _exp5_sweep(
+    # SWED — Sentinel-2, 12 bands
+    _exp1_sweep(
         "SWED",
         os.path.join(scratch_path, "SWED", "train"),
         save_path,
         overrides={"incl_bands": "[1,2,3,4,5,6,7,8,9,10,11,12]", "satellite": "sentinel", "batch_size": 8},
     )
 
-
-def exp5c_sanet(scratch_path, save_path):
-    """Experiment 5c: UNet hyperparameter sweep on SANet_processed (Gaofen-1)."""
-    print("\n" + "=" * 65)
-    print("Experiment 5c: Dataset Comparison — SANet_processed")
-    print("=" * 65)
-    _exp5_sweep(
+    # SANet_processed — Gaofen-1, 4 bands; uses separate validation set if provided
+    sanet_overrides = {"incl_bands": "[1,2,3,4]", "target_pos": -1, "satellite": "gaofen1"}
+    if sanet_valid_path is not None:
+        sanet_overrides["valid_path"] = sanet_valid_path
+    _exp1_sweep(
         "SANet_processed",
         os.path.join(scratch_path, "SANet_processed", "train"),
         save_path,
-        overrides={"incl_bands": "[1,2,3,4]", "target_pos": -1, "satellite": "gaofen1"},
+        overrides=sanet_overrides,
     )
 
-
-def exp5d_tcunet(scratch_path, save_path):
-    """Experiment 5d: UNet hyperparameter sweep on TCUNet_processed (Gaofen-6)."""
-    print("\n" + "=" * 65)
-    print("Experiment 5d: Dataset Comparison — TCUNet_processed")
-    print("=" * 65)
-    _exp5_sweep(
+    # TCUNet_processed — Gaofen-6, 8 bands
+    _exp1_sweep(
         "TCUNet_processed",
         os.path.join(scratch_path, "TCUNet_processed", "train"),
         save_path,
@@ -275,14 +203,13 @@ def _dataset_name(model_name):
 
 
 def _experiment_number(config):
-    name    = config["model_name"]
-    encoder = config["encoder"]
+    name = config["model_name"]
+
+    if config.get("experiment_tag") is not None:
+        return config["experiment_tag"]
 
     if not name.startswith("LICS"):
-        return 5
-
-    if encoder != "scratch":
-        return 4 if config["freeze_encoder"] else 3
+        return 1
 
     architectures = {"unet", "r2_unet", "att_unet", "r2att_unet"}
     stem = name[len("LICS_"):]
@@ -290,7 +217,7 @@ def _experiment_number(config):
         if stem.endswith(f"_{opt}"):
             stem = stem[:-(len(opt) + 1)]
             break
-    return 1 if stem in architectures else 2
+    return 2 if stem in architectures else 3
 
 
 def evaluate_all(models_dir, test_paths, output_csv):
@@ -505,15 +432,17 @@ def main():
     parser.add_argument("--train_path",    type=str, default=None,
                         help="Path to LICS training data (.npy files)")
     parser.add_argument("--finetune_path", type=str, default=None,
-                        help="Path to LICS finetuning data (required for experiment 2)")
+                        help="Path to LICS finetuning data (required for experiment 3)")
     parser.add_argument("--scratch_path",  type=str, default=None,
-                        help="Path to scratch directory containing SWED, SANet_processed, TCUNet_processed (required for experiment 5)")
+                        help="Path to scratch directory containing SWED, SANet_processed, TCUNet_processed (required for experiment 1)")
+    parser.add_argument("--sanet_valid",   type=str, default=None,
+                        help="Path to SANet_processed validation set (uses random split if omitted)")
     parser.add_argument("--save_path",     type=str, default=None,
                         help="Directory to save models and configs")
     parser.add_argument("--experiment",    type=str,
-                        choices=["1", "2", "3", "4", "5", "5a", "5b", "5c", "5d"],
+                        choices=["1", "2", "3"],
                         default=None,
-                        help="Run a specific experiment. 5=all datasets, 5a=LICS, 5b=SWED, 5c=SANet, 5d=TCUNet. Omit to run all.")
+                        help="Run a specific experiment. Omit to run all.")
 
     # Evaluation mode
     parser.add_argument("--evaluate",      action="store_true",
@@ -548,13 +477,13 @@ def main():
     if args.save_path is None:
         parser.error("--save_path is required for training")
 
-    needs_train  = args.experiment in (None, "1", "2", "3", "4", "5", "5a")
-    needs_scratch = args.experiment in (None, "5", "5b", "5c", "5d")
+    needs_train   = args.experiment in (None, "2", "3")
+    needs_scratch = args.experiment in (None, "1")
 
     if needs_train and args.train_path is None:
         parser.error("--train_path is required for this experiment")
-    if args.experiment in (None, "2") and args.finetune_path is None:
-        parser.error("--finetune_path is required for experiment 2")
+    if args.experiment in (None, "3") and args.finetune_path is None:
+        parser.error("--finetune_path is required for experiment 3")
     if needs_scratch and args.scratch_path is None:
         parser.error("--scratch_path is required for this experiment")
 
@@ -564,28 +493,13 @@ def main():
     exp     = args.experiment
 
     if run_all or exp == "1":
-        exp1_architectures(args.train_path, args.save_path)
+        exp1_datasets(args.train_path, args.scratch_path, args.save_path, args.sanet_valid)
 
     if run_all or exp == "2":
-        exp2_augmentations(args.finetune_path, args.save_path)
+        exp2_architectures(args.train_path, args.save_path)
 
     if run_all or exp == "3":
-        exp3_encoders(args.train_path, args.save_path)
-
-    if run_all or exp == "4":
-        exp4_frozen_encoders(args.train_path, args.save_path)
-
-    if run_all or exp in ("5", "5a"):
-        exp5a_lics(args.train_path, args.save_path)
-
-    if run_all or exp in ("5", "5b"):
-        exp5b_swed(args.scratch_path, args.save_path)
-
-    if run_all or exp in ("5", "5c"):
-        exp5c_sanet(args.scratch_path, args.save_path)
-
-    if run_all or exp in ("5", "5d"):
-        exp5d_tcunet(args.scratch_path, args.save_path)
+        exp3_augmentations(args.finetune_path, args.save_path)
 
 
 if __name__ == "__main__":

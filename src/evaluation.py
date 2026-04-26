@@ -55,10 +55,10 @@ def eval_metrics(targets, preds):
         TP_, TN_, FP_, FN_ = confusion_metrics(pred, target)
 
         accuracy = (TP_ + TN_) / (TP_ + TN_ + FP_ + FN_)
-        balanced_accuracy = 0.5 * (TP_ / (TP_ + FN_) + TN_ / (TN_ + FP_))
-        precision = TP_ / (TP_ + FP_)
-        recall = TP_ / (TP_ + FN_)
-        f1 = 2 * (precision * recall) / (precision + recall)
+        balanced_accuracy = 0.5 * (TP_ / (TP_ + FN_) + TN_ / (TN_ + FP_)) if (TP_ + FN_) > 0 and (TN_ + FP_) > 0 else np.nan
+        precision = TP_ / (TP_ + FP_) if (TP_ + FP_) > 0 else np.nan
+        recall = TP_ / (TP_ + FN_) if (TP_ + FN_) > 0 else np.nan
+        f1 = 2 * (precision * recall) / (precision + recall) if (not np.isnan(precision) and not np.isnan(recall) and (precision + recall) > 0) else np.nan
 
         r_accuracy.append(accuracy)
         r_balanced_accuracy.append(balanced_accuracy)
@@ -78,13 +78,13 @@ def eval_metrics(targets, preds):
         r_mse.append(mse)
         r_fom.append(fom)
 
-    accuracy = np.mean(r_accuracy)
-    balanced_accuracy = np.mean(r_balanced_accuracy)
-    precision = np.mean(r_precision)
-    recall = np.mean(r_recall)
-    f1 = np.mean(r_f1)
-    mse = np.mean(r_mse)
-    fom = np.mean(r_fom)
+    accuracy = np.nanmean(r_accuracy)
+    balanced_accuracy = np.nanmean(r_balanced_accuracy)
+    precision = np.nanmean(r_precision)
+    recall = np.nanmean(r_recall)
+    f1 = np.nanmean(r_f1)
+    mse = np.nanmean(r_mse)
+    fom = np.nanmean(r_fom)
 
     return {
         "accuracy": accuracy,

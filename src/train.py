@@ -106,7 +106,7 @@ def train_model(train_loader, valid_loader, args):
         epoch_losses.append(valid_loss)
         print(f"Validation Loss: {valid_loss:.5f}")
 
-        if valid_loss < min_loss:
+        if valid_loss < min_loss - args.early_stopping_min_delta:
             min_loss = valid_loss
             epochs_no_improve = 0
             m = model.module if isinstance(model, torch.nn.DataParallel) else model
@@ -278,6 +278,8 @@ def main():
     parser.add_argument("--split", type=float, default=0.9)
     parser.add_argument("--early_stopping", type=int, default=-1,
                         help="Patience in epochs; -1 disables early stopping")
+    parser.add_argument("--early_stopping_min_delta", type=float, default=1e-4,
+                        help="Minimum loss improvement to reset patience counter")
     parser.add_argument("--seed", type=int, default=42)
 
     # Augmentation
