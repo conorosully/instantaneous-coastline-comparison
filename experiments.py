@@ -102,7 +102,7 @@ def exp2_architectures(train_path, save_path):
 
 def exp3_augmentations(dataset, finetune_path, save_path, overrides=None):
     """
-    UNet × all augmentation types × adam on a given dataset.
+    UNet × all augmentation types × all optimizers on a given dataset.
     dataset   : dataset name prefix for model naming (e.g. "LICS", "SWED")
     overrides : optional dict of config overrides (e.g. satellite, incl_bands)
     """
@@ -111,19 +111,22 @@ def exp3_augmentations(dataset, finetune_path, save_path, overrides=None):
     print("=" * 65)
 
     augmentations = ["none", "geometric", "gaussian_noise", "salt_pepper", "contrast", "combined"]
+    optimizers    = ["adam", "adamw", "sgd"]
 
     for aug in augmentations:
-        model_name = f"{dataset}_{aug}_adam"
-        print(f"\n  {model_name}")
-        run_experiment({
-            **_base(finetune_path, save_path),
-            "model_name":     model_name,
-            "augmentation":   aug,
-            "optimizer":      "adam",
-            "split":          0.8,
-            "experiment_tag": 3,
-            **(overrides or {}),
-        })
+        for opt in optimizers:
+            model_name = f"{dataset}_{aug}_{opt}"
+            print(f"\n  {model_name}")
+            run_experiment({
+                **_base(finetune_path, save_path),
+                "model_name":     model_name,
+                "augmentation":   aug,
+                "optimizer":      opt,
+                "lr":             [0.1, 0.01, 0.001, 0.0001],
+                "split":          0.8,
+                "experiment_tag": 3,
+                **(overrides or {}),
+            })
 
 
 # ---------------------------------------------------------
