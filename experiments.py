@@ -70,16 +70,22 @@ def _base(train_path, save_path):
 # Experiment 2 — Architecture comparison
 # ---------------------------------------------------------
 
-def exp2_architectures(train_path, save_path):
+_EXP2_ARCHITECTURES = ("unet", "r2_unet", "att_unet", "r2att_unet")
+
+
+def exp2_architectures(train_path, save_path, architecture=None):
     """
-    All scratch architectures × all optimizers.
-    Trained on the LICS training set.
+    All scratch architectures × all optimizers, trained on LICS.
+
+    architecture : one of _EXP2_ARCHITECTURES to run a single arch, or None to run all.
     """
     print("\n" + "=" * 65)
     print("Experiment 2: Architecture Comparison")
+    if architecture:
+        print(f"  (architecture filter: {architecture})")
     print("=" * 65)
 
-    architectures = ["unet", "r2_unet", "att_unet", "r2att_unet"]
+    architectures = [architecture] if architecture else list(_EXP2_ARCHITECTURES)
     optimizers    = ["adam", "adamw", "sgd"]
 
     for arch in architectures:
@@ -92,6 +98,7 @@ def exp2_architectures(train_path, save_path):
                 "model_type":     arch,
                 "optimizer":      opt,
                 "lr":             [0.1, 0.01, 0.001, 0.0001],
+                "early_stopping": 10,
                 "experiment_tag": 2,
             })
 
@@ -157,41 +164,53 @@ def _exp1_sweep(dataset, train_path, save_path, overrides):
         })
 
 
-def exp1_datasets(train_path, scratch_path, save_path):
-    """Experiment 1: UNet hyperparameter sweep across all four datasets."""
+_EXP1_DATASETS = ("LICS", "SWED", "SANet_processed", "TCUNet_processed")
+
+
+def exp1_datasets(train_path, scratch_path, save_path, dataset=None):
+    """
+    Experiment 1: UNet hyperparameter sweep across optical datasets.
+
+    dataset : one of _EXP1_DATASETS to run a single dataset, or None to run all.
+    """
     print("\n" + "=" * 65)
     print("Experiment 1: Multi-Dataset Hyperparameter Sweep")
+    if dataset:
+        print(f"  (dataset filter: {dataset})")
     print("=" * 65)
 
-    # LICS — Landsat, 7 bands
-    _exp1_sweep("LICS", train_path, save_path, overrides={})
+    run_all = dataset is None
 
-    # SWED — Sentinel-2, 12 bands
-    _exp1_sweep(
-        "SWED",
-        os.path.join(scratch_path, "SWED", "train"),
-        save_path,
-        overrides={"incl_bands": "[1,2,3,4,5,6,7,8,9,10,11,12]", "satellite": "sentinel"},
-    )
+    if run_all or dataset == "LICS":
+        _exp1_sweep("LICS", train_path, save_path, overrides={"early_stopping": 10})
 
-    # SANet_processed — Gaofen-1, 4 bands; uses separate validation set
-    _exp1_sweep(
-        "SANet_processed",
-        os.path.join(scratch_path, "SANet_processed", "train"),
-        save_path,
-        overrides={
-            "incl_bands": "[1,2,3,4]", "target_pos": -1, "satellite": "gaofen1",
-            "valid_path": os.path.join(scratch_path, "SANet_processed", "valid"),
-        },
-    )
+    if run_all or dataset == "SWED":
+        _exp1_sweep(
+            "SWED",
+            os.path.join(scratch_path, "SWED", "train"),
+            save_path,
+            overrides={"incl_bands": "[1,2,3,4,5,6,7,8,9,10,11,12]", "satellite": "sentinel",
+                       "early_stopping": 10},
+        )
 
-    # TCUNet_processed — Gaofen-6, 8 bands
-    _exp1_sweep(
-        "TCUNet_processed",
-        os.path.join(scratch_path, "TCUNet_processed", "train"),
-        save_path,
-        overrides={"incl_bands": "[1,2,3,4,5,6,7,8]", "target_pos": -1, "satellite": "gaofen6"},
-    )
+    if run_all or dataset == "SANet_processed":
+        _exp1_sweep(
+            "SANet_processed",
+            os.path.join(scratch_path, "SANet_processed", "train"),
+            save_path,
+            overrides={
+                "incl_bands": "[1,2,3,4]", "target_pos": -1, "satellite": "gaofen1",
+                "valid_path": os.path.join(scratch_path, "SANet_processed", "valid"),
+            },
+        )
+
+    if run_all or dataset == "TCUNet_processed":
+        _exp1_sweep(
+            "TCUNet_processed",
+            os.path.join(scratch_path, "TCUNet_processed", "train"),
+            save_path,
+            overrides={"incl_bands": "[1,2,3,4,5,6,7,8]", "target_pos": -1, "satellite": "gaofen6"},
+        )
 
 
 # ---------------------------------------------------------
@@ -227,7 +246,8 @@ def evaluate_all(models_dir, test_paths, output_csv):
     """
     Run evaluation for every model in models_dir and write results to a CSV.
 
-    models_dir : directory containing .pth / .json pairs
+    models_dir : parent directory containing per-experiment subdirectories
+                 (exp1/, exp2/, exp3/, …).
     test_paths : dict mapping dataset name to its test directory
                  e.g. {"LICS": "data/LICS/test",
                         "SWED": "data/SWED/test",
@@ -236,6 +256,7 @@ def evaluate_all(models_dir, test_paths, output_csv):
     output_csv : path to write the results CSV
     """
     import csv
+    import json
     import glob
     import types
     import numpy as np
@@ -245,7 +266,17 @@ def evaluate_all(models_dir, test_paths, output_csv):
 
     device = get_device()
 
-    json_files = sorted(glob.glob(os.path.join(models_dir, "*.json")))
+    # Collect (json_path, model_dir, exp_num) from all exp*/ subdirectories,
+    # sorted so results are grouped by experiment then model name.
+    exp_dirs = sorted(
+        e.path for e in os.scandir(models_dir)
+        if e.is_dir() and e.name.startswith("exp") and e.name[3:].isdigit()
+    )
+    entries = [
+        (json_path, exp_dir, int(os.path.basename(exp_dir)[3:]))
+        for exp_dir in exp_dirs
+        for json_path in sorted(glob.glob(os.path.join(exp_dir, "*.json")))
+    ]
 
     fieldnames = [
         "model_name", "experiment",
@@ -256,14 +287,13 @@ def evaluate_all(models_dir, test_paths, output_csv):
     ]
 
     rows = []
-    for json_path in json_files:
-        import json
+    for json_path, model_dir, exp_num in entries:
         with open(json_path) as f:
             config = json.load(f)
 
-        model_name  = config["model_name"]
-        dataset     = _dataset_name(model_name)
-        test_dir    = test_paths.get(dataset)
+        model_name = config["model_name"]
+        dataset    = _dataset_name(model_name)
+        test_dir   = test_paths.get(dataset)
 
         if test_dir is None:
             print(f"  Skipping {model_name} — no test path for dataset '{dataset}'")
@@ -274,7 +304,7 @@ def evaluate_all(models_dir, test_paths, output_csv):
             print(f"  Skipping {model_name} — no .npy files in {test_dir}")
             continue
 
-        print(f"  Evaluating {model_name} ({len(test_files)} test images)...")
+        print(f"  [exp{exp_num}] Evaluating {model_name} ({len(test_files)} test images)...")
 
         args = types.SimpleNamespace(
             target_pos   = config["target_pos"],
@@ -292,7 +322,7 @@ def evaluate_all(models_dir, test_paths, output_csv):
             args.target_pos = -2  # LICS has edge mask in last channel
 
         loader = DataLoader(TrainDataset(test_files, args), batch_size=16)
-        model, _ = load_model(model_name, models_dir, device=device)
+        model, _ = load_model(model_name, model_dir, device=device)
         n_params = sum(p.numel() for p in model.parameters())
 
         targets_list, preds_list = [], []
@@ -317,7 +347,7 @@ def evaluate_all(models_dir, test_paths, output_csv):
 
         rows.append({
             "model_name":       model_name,
-            "experiment":       _experiment_number(config),
+            "experiment":       exp_num,
             "model_type":       config["model_type"],
             "encoder":          config["encoder"],
             "pretrained":       config.get("pretrained", "none"),
@@ -338,8 +368,6 @@ def evaluate_all(models_dir, test_paths, output_csv):
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
-
-    
 
     print(f"\nResults written to {output_csv} ({len(rows)} models evaluated)")
 
@@ -446,6 +474,14 @@ def main():
                         choices=["1", "2", "3"],
                         default=None,
                         help="Run a specific experiment. Omit to run all.")
+    parser.add_argument("--exp1_dataset",  type=str,
+                        choices=list(_EXP1_DATASETS),
+                        default=None,
+                        help="(Experiment 1 only) Run a single dataset. Omit to run all four.")
+    parser.add_argument("--exp2_arch",     type=str,
+                        choices=list(_EXP2_ARCHITECTURES),
+                        default=None,
+                        help="(Experiment 2 only) Run a single architecture. Omit to run all four.")
 
     # Evaluation mode
     parser.add_argument("--evaluate",      action="store_true",
@@ -496,10 +532,12 @@ def main():
     exp     = args.experiment
 
     if run_all or exp == "1":
-        exp1_datasets(args.train_path, args.scratch_path, args.save_path)
+        exp1_datasets(args.train_path, args.scratch_path, args.save_path,
+                      dataset=args.exp1_dataset)
 
     if run_all or exp == "2":
-        exp2_architectures(args.train_path, args.save_path)
+        exp2_architectures(args.train_path, args.save_path,
+                           architecture=args.exp2_arch)
 
     if run_all or exp == "3":
         if args.finetune_path:
