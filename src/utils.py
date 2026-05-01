@@ -138,22 +138,28 @@ DATASET_CONFIG = {
 }
 
 
-def load_dataset(name, path):
+def load_dataset(name, path, sample=None, overrides=None):
     """
     Load inputs and targets for a dataset split.
 
-    name : dataset name — one of DATASET_CONFIG keys
-    path : directory containing .npy files
+    name      : dataset name — one of DATASET_CONFIG keys
+    path      : directory containing .npy files
+    sample    : if set, randomly select this many files (reproducible seed)
+    overrides : dict of config keys to override, e.g. {"target_pos": -1}
 
     Returns: inputs  — list of (H, W, C) raw band arrays
              targets — list of (H, W) int mask arrays
              satellite — satellite string for this dataset
     """
-    cfg        = DATASET_CONFIG[name]
+    cfg        = {**DATASET_CONFIG[name], **(overrides or {})}
     incl_bands = cfg["incl_bands"]
     target_pos = cfg["target_pos"]
 
     files = sorted(glob.glob(os.path.join(path, "*.npy")))
+    if sample is not None and sample < len(files):
+        rng   = np.random.default_rng(42)
+        files = list(rng.choice(files, size=sample, replace=False))
+
     data  = [np.load(f) for f in files]
 
     inputs  = [d[:, :, incl_bands] for d in data]
@@ -162,18 +168,25 @@ def load_dataset(name, path):
     return inputs, targets, cfg["satellite"]
 
 
-def load_all_datasets(paths):
+def load_all_datasets(paths, sample=None, overrides=None):
     """
     Load inputs and targets for multiple datasets in one call.
 
-    paths : dict mapping dataset name to its directory path
-            e.g. {"LICS": "../../data/LICS/test",
-                  "SWED": "../data/SWED/test", ...}
+    paths     : dict mapping dataset name to its directory path
+                e.g. {"LICS": "../../data/LICS/test",
+                      "SWED": "../data/SWED/test", ...}
+    sample    : if set, randomly select this many files per dataset
+    overrides : dict mapping dataset name to config overrides
+                e.g. {"LICS": {"target_pos": -1}}
 
     Returns: dict {name: {"inputs": [...], "targets": [...], "satellite": "..."}}
     """
+    overrides = overrides or {}
     return {
-        name: dict(zip(("inputs", "targets", "satellite"), load_dataset(name, path)))
+        name: dict(zip(
+            ("inputs", "targets", "satellite"),
+            load_dataset(name, path, sample=sample, overrides=overrides.get(name)),
+        ))
         for name, path in paths.items()
     }
 

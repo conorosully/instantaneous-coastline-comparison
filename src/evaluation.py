@@ -29,7 +29,10 @@ def calc_fom(ref_img, img, alpha=1.0 / 9.0):
             if img[i, j]:
                 fom += 1.0 / (1.0 + dist[i, j] * dist[i, j] * alpha)
 
-    fom /= np.maximum(np.count_nonzero(img), np.count_nonzero(ref_img))
+    denom = np.maximum(np.count_nonzero(img), np.count_nonzero(ref_img))
+    if denom == 0:
+        return np.nan
+    fom /= denom
 
     return fom
 
@@ -56,9 +59,9 @@ def eval_metrics(targets, preds):
 
         accuracy = (TP_ + TN_) / (TP_ + TN_ + FP_ + FN_)
         balanced_accuracy = 0.5 * (TP_ / (TP_ + FN_) + TN_ / (TN_ + FP_)) if (TP_ + FN_) > 0 and (TN_ + FP_) > 0 else np.nan
-        precision = TP_ / (TP_ + FP_) if (TP_ + FP_) > 0 else np.nan
-        recall = TP_ / (TP_ + FN_) if (TP_ + FN_) > 0 else np.nan
-        f1 = 2 * (precision * recall) / (precision + recall) if (not np.isnan(precision) and not np.isnan(recall) and (precision + recall) > 0) else np.nan
+        precision = TP_ / (TP_ + FP_) if (TP_ + FP_) > 0 else 1.0
+        recall    = TP_ / (TP_ + FN_) if (TP_ + FN_) > 0 else 1.0
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
 
         r_accuracy.append(accuracy)
         r_balanced_accuracy.append(balanced_accuracy)
@@ -78,13 +81,17 @@ def eval_metrics(targets, preds):
         r_mse.append(mse)
         r_fom.append(fom)
 
-    accuracy = np.nanmean(r_accuracy)
-    balanced_accuracy = np.nanmean(r_balanced_accuracy)
-    precision = np.nanmean(r_precision)
-    recall = np.nanmean(r_recall)
-    f1 = np.nanmean(r_f1)
-    mse = np.nanmean(r_mse)
-    fom = np.nanmean(r_fom)
+    def _nanmean(arr):
+        a = np.array(arr, dtype=float)
+        return np.nan if np.all(np.isnan(a)) else np.nanmean(a)
+
+    accuracy = _nanmean(r_accuracy)
+    balanced_accuracy = _nanmean(r_balanced_accuracy)
+    precision = _nanmean(r_precision)
+    recall = _nanmean(r_recall)
+    f1 = _nanmean(r_f1)
+    mse = _nanmean(r_mse)
+    fom = _nanmean(r_fom)
 
     return {
         "accuracy": accuracy,

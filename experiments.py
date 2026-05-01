@@ -70,37 +70,75 @@ def _base(train_path, save_path):
 # Experiment 2 — Architecture comparison
 # ---------------------------------------------------------
 
-_EXP2_ARCHITECTURES = ("unet", "r2_unet", "att_unet", "r2att_unet")
+_EXP2_ARCHITECTURES = ("unet", "r2_unet", "att_unet", "r2att_unet", "swed_unet")
+_EXP2_DATASETS      = ("LICS", "SWED", "SANet_processed", "TCUNet_processed")
 
 
-def exp2_architectures(train_path, save_path, architecture=None):
+def _exp2_dataset_config(dataset, train_path, scratch_path):
+    """Return dataset-specific config overrides for experiment 2."""
+    if dataset == "LICS":
+        return {
+            "train_path": train_path,
+            "satellite":  "landsat",
+            "incl_bands": "[1,2,3,4,5,6,7]",
+        }
+    if dataset == "SWED":
+        return {
+            "train_path": os.path.join(scratch_path, "SWED", "train"),
+            "satellite":  "sentinel",
+            "incl_bands": "[1,2,3,4,5,6,7,8,9,10,11,12]",
+        }
+    if dataset == "SANet_processed":
+        return {
+            "train_path": os.path.join(scratch_path, "SANet_processed", "train"),
+            "valid_path": os.path.join(scratch_path, "SANet_processed", "valid"),
+            "satellite":  "gaofen1",
+            "incl_bands": "[1,2,3,4]",
+        }
+    if dataset == "TCUNet_processed":
+        return {
+            "train_path": os.path.join(scratch_path, "TCUNet_processed", "train"),
+            "satellite":  "gaofen6",
+            "incl_bands": "[1,2,3,4,5,6,7,8]",
+        }
+    raise ValueError(f"Unknown dataset: {dataset}")
+
+
+def exp2_architectures(train_path, scratch_path, save_path, dataset=None, models=None):
     """
-    All scratch architectures × all optimizers, trained on LICS.
+    Scratch architectures × adam/sgd × datasets.
 
-    architecture : one of _EXP2_ARCHITECTURES to run a single arch, or None to run all.
+    dataset : one of _EXP2_DATASETS, or None to run all four.
+    models  : list of architectures to run, or None to run all five.
     """
     print("\n" + "=" * 65)
     print("Experiment 2: Architecture Comparison")
-    if architecture:
-        print(f"  (architecture filter: {architecture})")
+    if dataset:
+        print(f"  dataset  : {dataset}")
+    if models:
+        print(f"  models   : {models}")
     print("=" * 65)
 
-    architectures = [architecture] if architecture else list(_EXP2_ARCHITECTURES)
-    optimizers    = ["adam", "adamw", "sgd"]
+    datasets      = [dataset] if dataset else list(_EXP2_DATASETS)
+    architectures = list(models) if models else list(_EXP2_ARCHITECTURES)
+    optimizers    = ["adam", "sgd"]
 
-    for arch in architectures:
-        for opt in optimizers:
-            model_name = f"LICS_{arch}_{opt}"
-            print(f"\n  {model_name}")
-            run_experiment({
-                **_base(train_path, save_path),
-                "model_name":     model_name,
-                "model_type":     arch,
-                "optimizer":      opt,
-                "lr":             [0.1, 0.01, 0.001, 0.0001],
-                "early_stopping": 10,
-                "experiment_tag": 2,
-            })
+    for ds in datasets:
+        ds_cfg = _exp2_dataset_config(ds, train_path, scratch_path)
+        for arch in architectures:
+            for opt in optimizers:
+                model_name = f"{ds}_{arch}_{opt}"
+                print(f"\n  {model_name}")
+                run_experiment({
+                    **_base(ds_cfg["train_path"], save_path),
+                    **ds_cfg,
+                    "model_name":     model_name,
+                    "model_type":     arch,
+                    "optimizer":      opt,
+                    "lr":             [0.1, 0.01, 0.001],
+                    "early_stopping": 10,
+                    "experiment_tag": 2,
+                })
 
 
 # ---------------------------------------------------------
@@ -233,7 +271,7 @@ def _experiment_number(config):
     if not name.startswith("LICS"):
         return 1
 
-    architectures = {"unet", "r2_unet", "att_unet", "r2att_unet"}
+    architectures = {"unet", "r2_unet", "att_unet", "r2att_unet", "swed_unet"}
     stem = name[len("LICS_"):]
     for opt in ("adam", "adamw", "sgd"):
         if stem.endswith(f"_{opt}"):
@@ -478,10 +516,17 @@ def main():
                         choices=list(_EXP1_DATASETS),
                         default=None,
                         help="(Experiment 1 only) Run a single dataset. Omit to run all four.")
-    parser.add_argument("--exp2_arch",     type=str,
+    parser.add_argument("--exp2_dataset",   type=str,
+                        choices=list(_EXP2_DATASETS),
+                        default=None,
+                        help="(Experiment 2 only) Run a single dataset. Omit to run all four.")
+    exp2_model_group = parser.add_mutually_exclusive_group()
+    exp2_model_group.add_argument("--exp2_models",    type=str, nargs="+",
                         choices=list(_EXP2_ARCHITECTURES),
                         default=None,
-                        help="(Experiment 2 only) Run a single architecture. Omit to run all four.")
+                        help="(Experiment 2 only) List of architectures to run, e.g. --exp2_models unet swed_unet att_unet")
+    exp2_model_group.add_argument("--exp2_all_models", action="store_true",
+                        help="(Experiment 2 only) Run all architectures (default if neither flag is given)")
 
     # Evaluation mode
     parser.add_argument("--evaluate",      action="store_true",
@@ -517,7 +562,7 @@ def main():
         parser.error("--save_path is required for training")
 
     needs_train   = args.experiment in (None, "2")
-    needs_scratch = args.experiment in (None, "1")
+    needs_scratch = args.experiment in (None, "1", "2")
 
     if needs_train and args.train_path is None:
         parser.error("--train_path is required for this experiment")
@@ -536,8 +581,10 @@ def main():
                       dataset=args.exp1_dataset)
 
     if run_all or exp == "2":
-        exp2_architectures(args.train_path, args.save_path,
-                           architecture=args.exp2_arch)
+        exp2_models = args.exp2_models if not args.exp2_all_models else None
+        exp2_architectures(args.train_path, args.scratch_path, args.save_path,
+                           dataset=args.exp2_dataset,
+                           models=exp2_models)
 
     if run_all or exp == "3":
         if args.finetune_path:
