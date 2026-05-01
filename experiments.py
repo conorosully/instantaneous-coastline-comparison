@@ -78,28 +78,32 @@ def _exp2_dataset_config(dataset, train_path, scratch_path):
     """Return dataset-specific config overrides for experiment 2."""
     if dataset == "LICS":
         return {
-            "train_path": train_path,
-            "satellite":  "landsat",
-            "incl_bands": "[1,2,3,4,5,6,7]",
+            "train_path":     train_path,
+            "satellite":      "landsat",
+            "incl_bands":     "[1,2,3,4,5,6,7]",
+            "early_stopping": 10,
         }
     if dataset == "SWED":
         return {
-            "train_path": os.path.join(scratch_path, "SWED", "train"),
-            "satellite":  "sentinel",
-            "incl_bands": "[1,2,3,4,5,6,7,8,9,10,11,12]",
+            "train_path":     os.path.join(scratch_path, "SWED", "train"),
+            "satellite":      "sentinel",
+            "incl_bands":     "[1,2,3,4,5,6,7,8,9,10,11,12]",
+            "early_stopping": 10,
         }
     if dataset == "SANet_processed":
         return {
-            "train_path": os.path.join(scratch_path, "SANet_processed", "train"),
-            "valid_path": os.path.join(scratch_path, "SANet_processed", "valid"),
-            "satellite":  "gaofen1",
-            "incl_bands": "[1,2,3,4]",
+            "train_path":     os.path.join(scratch_path, "SANet_processed", "train"),
+            "valid_path":     os.path.join(scratch_path, "SANet_processed", "valid"),
+            "satellite":      "gaofen1",
+            "incl_bands":     "[1,2,3,4]",
+            "early_stopping": 20,
         }
     if dataset == "TCUNet_processed":
         return {
-            "train_path": os.path.join(scratch_path, "TCUNet_processed", "train"),
-            "satellite":  "gaofen6",
-            "incl_bands": "[1,2,3,4,5,6,7,8]",
+            "train_path":     os.path.join(scratch_path, "TCUNet_processed", "train"),
+            "satellite":      "gaofen6",
+            "incl_bands":     "[1,2,3,4,5,6,7,8]",
+            "early_stopping": 20,
         }
     raise ValueError(f"Unknown dataset: {dataset}")
 
@@ -136,7 +140,6 @@ def exp2_architectures(train_path, scratch_path, save_path, dataset=None, models
                     "model_type":     arch,
                     "optimizer":      opt,
                     "lr":             [0.1, 0.01, 0.001],
-                    "early_stopping": 10,
                     "experiment_tag": 2,
                 })
 
