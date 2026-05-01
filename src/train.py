@@ -201,7 +201,7 @@ def _args_to_dict(args):
 def _validate_args(args):
     os.makedirs(args.save_path, exist_ok=True)
 
-    valid_model_types = ["unet", "r2_unet", "att_unet", "r2att_unet"]
+    valid_model_types = ["unet", "r2_unet", "att_unet", "r2att_unet", "swed_unet"]
     if args.model_type not in valid_model_types:
         raise ValueError(f"model_type must be one of {valid_model_types}")
 
@@ -216,7 +216,7 @@ def _validate_args(args):
     if args.pretrained != "none" and args.encoder == "scratch":
         raise ValueError("pretrained requires a ResNet encoder, not 'scratch'")
 
-    if args.encoder != "scratch" and args.model_type in ("r2_unet", "r2att_unet"):
+    if args.encoder != "scratch" and args.model_type in ("r2_unet", "r2att_unet", "swed_unet"):
         raise ValueError(
             f"model_type='{args.model_type}' is not compatible with a pretrained encoder. "
             f"Use 'unet' or 'att_unet'."
@@ -245,7 +245,7 @@ def main():
 
     # Architecture
     parser.add_argument("--model_type", type=str, default="unet",
-                        choices=["unet", "r2_unet", "att_unet", "r2att_unet"])
+                        choices=["unet", "r2_unet", "att_unet", "r2att_unet", "swed_unet"])
     parser.add_argument("--encoder", type=str, default="scratch",
                         choices=["scratch", "resnet18", "resnet50", "resnet101"])
     parser.add_argument("--pretrained", type=str, default="none",

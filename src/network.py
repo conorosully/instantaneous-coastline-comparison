@@ -1,5 +1,5 @@
 # Image segmentation networks implemented in PyTorch
-# Supported architectures: U-Net, R2U-Net, AttU-Net, R2AttU-Net
+# Supported architectures: U-Net, R2U-Net, AttU-Net, R2AttU-Net, SWED-UNet
 # Encoders: scratch, resnet18, resnet50, resnet101 (ImageNet or BigEarthNet pretrained)
 
 import warnings
@@ -324,6 +324,64 @@ class r2att_unet(nn.Module):
 
 
 # ---------------------------------------------------------
+# SWED U-Net (Seale et al. 2022)
+# Smaller channel widths (32→64→128→256, bottleneck 512),
+# ELU activation, Conv→ELU→BN order, ConvTranspose2d upsampling.
+# ---------------------------------------------------------
+
+class swed_conv_block(nn.Module):
+    def __init__(self, ch_in, ch_out):
+        super(swed_conv_block, self).__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(ch_in, ch_out, kernel_size=3, stride=1, padding=1, bias=True),
+            nn.ELU(inplace=True),
+            nn.BatchNorm2d(ch_out),
+            nn.Conv2d(ch_out, ch_out, kernel_size=3, stride=1, padding=1, bias=True),
+            nn.ELU(inplace=True),
+            nn.BatchNorm2d(ch_out),
+        )
+
+    def forward(self, x):
+        return self.conv(x)
+
+
+class swed_unet(nn.Module):
+    def __init__(self, input_channels=12, output_channels=2):
+        super(swed_unet, self).__init__()
+        self.Maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        self.Conv1 = swed_conv_block(ch_in=input_channels, ch_out=32)
+        self.Conv2 = swed_conv_block(ch_in=32,  ch_out=64)
+        self.Conv3 = swed_conv_block(ch_in=64,  ch_out=128)
+        self.Conv4 = swed_conv_block(ch_in=128, ch_out=256)
+        self.Conv5 = swed_conv_block(ch_in=256, ch_out=512)
+
+        self.Up4     = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2)
+        self.Up_conv4 = swed_conv_block(ch_in=512, ch_out=256)
+        self.Up3     = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2)
+        self.Up_conv3 = swed_conv_block(ch_in=256, ch_out=128)
+        self.Up2     = nn.ConvTranspose2d(128, 64,  kernel_size=2, stride=2)
+        self.Up_conv2 = swed_conv_block(ch_in=128, ch_out=64)
+        self.Up1     = nn.ConvTranspose2d(64,  32,  kernel_size=2, stride=2)
+        self.Up_conv1 = swed_conv_block(ch_in=64,  ch_out=32)
+
+        self.Conv_1x1 = nn.Conv2d(32, output_channels, kernel_size=1, stride=1, padding=0)
+
+    def forward(self, x):
+        x1 = self.Conv1(x)
+        x2 = self.Conv2(self.Maxpool(x1))
+        x3 = self.Conv3(self.Maxpool(x2))
+        x4 = self.Conv4(self.Maxpool(x3))
+        x5 = self.Conv5(self.Maxpool(x4))
+
+        d4 = self.Up_conv4(torch.cat((x4, self.Up4(x5)), dim=1))
+        d3 = self.Up_conv3(torch.cat((x3, self.Up3(d4)), dim=1))
+        d2 = self.Up_conv2(torch.cat((x2, self.Up2(d3)), dim=1))
+        d1 = self.Up_conv1(torch.cat((x1, self.Up1(d2)), dim=1))
+        return self.Conv_1x1(d1)
+
+
+# ---------------------------------------------------------
 # ResNet encoder
 # ---------------------------------------------------------
 
@@ -515,16 +573,16 @@ def get_model(encoder, model_type, in_channels, output_channels,
             "r2_unet":    r2_unet,
             "att_unet":   att_unet,
             "r2att_unet": r2att_unet,
+            "swed_unet":  swed_unet,
         }
         model = scratch_map[model_type](in_channels, output_channels)
         init_weights(model, weight_init)
         return model
 
     # ResNet encoder path
-    if model_type in ("r2_unet", "r2att_unet"):
+    if model_type in ("r2_unet", "r2att_unet", "swed_unet"):
         raise ValueError(
-            f"model_type='{model_type}' uses recurrent encoder blocks which are not "
-            f"compatible with a pretrained ResNet encoder. "
+            f"model_type='{model_type}' is not compatible with a pretrained ResNet encoder. "
             f"Use 'unet' or 'att_unet' with encoder='{encoder}'."
         )
 
