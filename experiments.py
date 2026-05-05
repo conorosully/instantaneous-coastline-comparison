@@ -104,6 +104,7 @@ def _exp2_dataset_config(dataset, train_path, scratch_path):
             "satellite":      "gaofen6",
             "incl_bands":     "[1,2,3,4,5,6,7,8]",
             "early_stopping": 20,
+            "batch_size":     4,   # Gaofen-6 tiles are large; 8 OOMs even for plain UNet
         }
     raise ValueError(f"Unknown dataset: {dataset}")
 

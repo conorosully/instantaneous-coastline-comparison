@@ -130,6 +130,7 @@ def _run_lr_sweep(train_loader, valid_loader, args):
     best_loss, best_lr, best_state_dict = np.inf, None, None
 
     for lr in args.lr:
+        torch.cuda.empty_cache()
         print(f"\n--- LR: {lr} ---")
         run_args = copy.copy(args)
         run_args.lr = lr
