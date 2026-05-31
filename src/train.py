@@ -65,6 +65,10 @@ def train_model(train_loader, valid_loader, args):
         freeze_encoder=args.freeze_encoder,
         weight_init=args.weight_init,
     )
+    if getattr(args, "finetune_from", None):
+        state = torch.load(args.finetune_from, map_location=args.device)
+        model.load_state_dict(state)
+
     model = model.to(args.device)
     if torch.cuda.device_count() > 1:
         print(f"Using {torch.cuda.device_count()} GPUs.")

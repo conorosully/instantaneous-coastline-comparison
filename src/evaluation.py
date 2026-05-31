@@ -3,15 +3,25 @@ from scipy.ndimage import distance_transform_edt
 import numpy as np
 import utils
 
-def confusion_metrics(pred, target):
-    """Returns confusion matrix metrics"""
-
+def confusion_metrics(target, pred):
+    """Returns confusion matrix metrics for a single image."""
     TP = np.sum((pred == 1) & (target == 1))
     TN = np.sum((pred == 0) & (target == 0))
     FP = np.sum((pred == 1) & (target == 0))
     FN = np.sum((pred == 0) & (target == 1))
-
     return TP, TN, FP, FN
+
+
+def confusion_metrics_per_image(targets, preds):
+    """Returns per-image confusion matrix counts as four lists: TPs, TNs, FPs, FNs."""
+    TPs, TNs, FPs, FNs = [], [], [], []
+    for target, pred in zip(targets, preds):
+        tp, tn, fp, fn = confusion_metrics(np.array(target), np.array(pred))
+        TPs.append(int(tp))
+        TNs.append(int(tn))
+        FPs.append(int(fp))
+        FNs.append(int(fn))
+    return TPs, TNs, FPs, FNs
 
 def calc_fom(ref_img, img, alpha=1.0 / 9.0):
     """
@@ -37,68 +47,61 @@ def calc_fom(ref_img, img, alpha=1.0 / 9.0):
     return fom
 
 
-def eval_metrics(targets, preds):
-    """Evaluate model performance on test set"""
-
-    r_accuracy = []
-    r_balanced_accuracy = []
-    r_precision = []
-    r_recall = []
-    r_f1 = []
-    r_mse = []
-    r_fom = []
-    # Calculate metrics for each image
+def fom_per_image(targets, preds):
+    """Return per-image TP, TN, FP, FN and FOM as a list of dicts."""
+    FOM = []
     for i in range(len(targets)):
         target = np.array(targets[i])
-        pred = np.array(
-            preds[i],
-        )
+        pred   = np.array(preds[i])
 
-        # segmentation metrics
-        TP_, TN_, FP_, FN_ = confusion_metrics(pred, target)
 
-        accuracy = (TP_ + TN_) / (TP_ + TN_ + FP_ + FN_)
-        balanced_accuracy = 0.5 * (TP_ / (TP_ + FN_) + TN_ / (TN_ + FP_)) if (TP_ + FN_) > 0 and (TN_ + FP_) > 0 else np.nan
-        precision = TP_ / (TP_ + FP_) if (TP_ + FP_) > 0 else 1.0
-        recall    = TP_ / (TP_ + FN_) if (TP_ + FN_) > 0 else 1.0
-        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-
-        r_accuracy.append(accuracy)
-        r_balanced_accuracy.append(balanced_accuracy)
-        r_precision.append(precision)
-        r_recall.append(recall)
-        r_f1.append(f1)
-
-        # Edge detection metrics
         target_edge = utils.edge_from_mask(target)
-        pred_edge = utils.edge_from_mask(pred)
-
-        TP_, TN_, FP_, FN_ = confusion_metrics(pred_edge, target_edge)
-
-        mse = (FP_ + FN_) / (TP_ + TN_ + FP_ + FN_)
+        pred_edge   = utils.edge_from_mask(pred)
         fom = calc_fom(target_edge, pred_edge)
 
-        r_mse.append(mse)
-        r_fom.append(fom)
+        FOM.append(fom)
+    return FOM
 
-    def _nanmean(arr):
-        a = np.array(arr, dtype=float)
-        return np.nan if np.all(np.isnan(a)) else np.nanmean(a)
 
-    accuracy = _nanmean(r_accuracy)
-    balanced_accuracy = _nanmean(r_balanced_accuracy)
-    precision = _nanmean(r_precision)
-    recall = _nanmean(r_recall)
-    f1 = _nanmean(r_f1)
-    mse = _nanmean(r_mse)
-    fom = _nanmean(r_fom)
+def aggregate_metrics(TPs, TNs, FPs, FNs, foms=None):
+    """
+    Compute micro-averaged metrics from per-image confusion matrix counts.
 
-    return {
-        "accuracy": accuracy,
-        "balanced_accuracy": balanced_accuracy,
+    TPs, TNs, FPs, FNs : sequences of per-image counts (lists, arrays, or pandas Series)
+    foms               : optional sequence of per-image FOM values; included in output if provided
+    """
+    total_TP = sum(TPs)
+    total_TN = sum(TNs)
+    total_FP = sum(FPs)
+    total_FN = sum(FNs)
+
+    precision = total_TP / (total_TP + total_FP) if (total_TP + total_FP) > 0 else 1.0
+    recall    = total_TP / (total_TP + total_FN) if (total_TP + total_FN) > 0 else 1.0
+    pos_iou   = total_TP / (total_TP + total_FP + total_FN)
+    neg_iou   = total_TN / (total_TN + total_FP + total_FN)
+
+    result = {
+        "accuracy":  (total_TP + total_TN) / (total_TP + total_TN + total_FP + total_FN),
         "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "mse": mse,
-        "fom": fom,
-    }, {"accuracy": r_accuracy, "fom": r_fom}
+        "recall":    recall,
+        "f1":        2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0,
+        "pos_iou":   pos_iou,
+        "neg_iou":   neg_iou,
+        "mean_iou":  (pos_iou + neg_iou) / 2,
+    }
+
+    if foms is not None:
+        fps = list(FPs)
+        fns = list(FNs)
+        fom_vals = []
+        for i, f in enumerate(foms):
+            if not np.isnan(f):
+                fom_vals.append(f)
+            elif fps[i] == 0 and fns[i] == 0:
+                fom_vals.append(1.0)
+            else:                
+                fom_vals.append(0.0)
+        a = np.array(fom_vals, dtype=float)
+        result["fom"] = np.nan if len(a) == 0 else np.nanmean(a)
+
+    return result

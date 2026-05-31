@@ -256,6 +256,125 @@ def exp1_datasets(train_path, scratch_path, save_path, dataset=None):
 
 
 # ---------------------------------------------------------
+# Experiment 4 — Fine-tuning comparison
+# ---------------------------------------------------------
+
+_EXP4_DATASETS = {
+    "LICS": {
+        "satellite":       "landsat",
+        "incl_bands":      "[1,2,3,4,5,6,7]",
+        "early_stopping":  10,
+        "orig_model":      "LICS_unet_sgd",   # best model from exp2
+        "finetune_subdir": os.path.join("LICS", "finetune"),
+    },
+    "SWED": {
+        "satellite":       "sentinel",
+        "incl_bands":      "[1,2,3,4,5,6,7,8,9,10,11,12]",
+        "early_stopping":  10,
+        "orig_model":      "SWED_unet_adam",  # best model from exp2
+        "finetune_subdir": os.path.join("SWED", "swed_finetune"),
+    },
+}
+
+_EXP4_ENCODERS    = ("resnet18", "resnet50", "resnet101")
+_EXP4_PRETRAINEDS = ("imagenet", "bigearthnet")
+
+
+_EXP4_GROUPS = ("unet", "imagenet", "bigearthnet")
+
+
+def exp4_finetuning(scratch_path, save_path, exp2_models_dir,
+                    dataset=None, groups=None):
+    """
+    Fine-tuning experiment on LICS and SWED with three model groups:
+
+      unet        — Continue from best exp2 U-Net checkpoint
+      imagenet    — ImageNet-pretrained ResNet encoder (frozen / fully fine-tuned)
+      bigearthnet — BigEarthNet-pretrained ResNet encoder (frozen / fully fine-tuned)
+
+    Training data is taken from the finetune splits:
+      LICS : scratch_path/LICS/finetune
+      SWED : scratch_path/SWED/swed_finetune
+
+    All groups sweep optimizer (adam, sgd) × lr (0.1, 0.01, 0.001).
+    freeze_encoder is swept for imagenet and bigearthnet groups.
+
+    exp2_models_dir : directory containing exp2 .pth files (e.g. ../models/exp2)
+    dataset         : "LICS" | "SWED", or None to run both
+    groups          : list subset of ("unet", "imagenet", "bigearthnet"), or None to run all
+    """
+    run_groups = set(groups) if groups else set(_EXP4_GROUPS)
+
+    print("\n" + "=" * 65)
+    print("Experiment 4: Fine-tuning Comparison")
+    if dataset:
+        print(f"  dataset: {dataset}")
+    print(f"  groups : {', '.join(g for g in _EXP4_GROUPS if g in run_groups)}")
+    print("=" * 65)
+
+    datasets   = [dataset] if dataset else list(_EXP4_DATASETS)
+    optimizers = ["adam", "sgd"]
+    lrs        = [0.1, 0.01, 0.001]
+
+    for ds in datasets:
+        ds_meta = _EXP4_DATASETS[ds]
+        train = os.path.join(scratch_path, ds_meta["finetune_subdir"])
+
+        ds_overrides = {
+            "satellite":      ds_meta["satellite"],
+            "incl_bands":     ds_meta["incl_bands"],
+            "early_stopping": ds_meta["early_stopping"],
+            "train_path":     train,
+            "split":          0.8,
+            "augmentation":   "geometric",
+        }
+
+        # ── Group: unet — continue from exp2 checkpoint ───────────────────
+        if "unet" in run_groups:
+            orig_pth = os.path.join(exp2_models_dir, ds_meta["orig_model"] + ".pth")
+            for opt in optimizers:
+                model_name = f"{ds}_ft_{opt}"
+                print(f"\n  {model_name}")
+                run_experiment({
+                    **_base(train, save_path),
+                    **ds_overrides,
+                    "model_name":     model_name,
+                    "model_type":     "unet",
+                    "encoder":        "scratch",
+                    "pretrained":     "none",
+                    "freeze_encoder": False,
+                    "finetune_from":  orig_pth,
+                    "optimizer":      opt,
+                    "lr":             lrs,
+                    "experiment_tag": 4,
+                })
+
+        # ── Groups: imagenet / bigearthnet — pretrained ResNet encoders ───
+        for pretrained in _EXP4_PRETRAINEDS:
+            if pretrained not in run_groups:
+                continue
+            for encoder in _EXP4_ENCODERS:
+                for freeze in (True, False):
+                    freeze_label = "frozen" if freeze else "tuned"
+                    for opt in optimizers:
+                        model_name = f"{ds}_{pretrained}_{encoder}_{freeze_label}_{opt}"
+                        print(f"\n  {model_name}")
+                        run_experiment({
+                            **_base(train, save_path),
+                            **ds_overrides,
+                            "model_name":     model_name,
+                            "model_type":     "unet",
+                            "encoder":        encoder,
+                            "pretrained":     pretrained,
+                            "freeze_encoder": freeze,
+                            "finetune_from":  None,
+                            "optimizer":      opt,
+                            "lr":             lrs,
+                            "experiment_tag": 4,
+                        })
+
+
+# ---------------------------------------------------------
 # Evaluate all saved models → CSV
 # ---------------------------------------------------------
 
@@ -286,7 +405,10 @@ def _experiment_number(config):
 
 def evaluate_all(models_dir, test_paths, output_csv):
     """
-    Run evaluation for every model in models_dir and write results to a CSV.
+    Run evaluation for every model in models_dir and write per-image results to a CSV.
+
+    One row per (model × image) with raw TP, TN, FP, FN and FOM.
+    Metrics can be computed from these values in a subsequent step.
 
     models_dir : parent directory containing per-experiment subdirectories
                  (exp1/, exp2/, exp3/, …).
@@ -304,7 +426,7 @@ def evaluate_all(models_dir, test_paths, output_csv):
     import numpy as np
     from torch.utils.data import DataLoader
     from dataset import TrainDataset
-    from evaluation import eval_metrics
+    from evaluation import confusion_metrics_per_image, fom_per_image
 
     device = get_device()
 
@@ -325,7 +447,7 @@ def evaluate_all(models_dir, test_paths, output_csv):
         "model_type", "encoder", "pretrained", "freeze_encoder",
         "augmentation", "optimizer", "best_lr", "best_loss", "epochs_trained",
         "satellite", "n_params",
-        "accuracy", "balanced_accuracy", "precision", "recall", "f1", "mse", "fom",
+        "filename", "TP", "TN", "FP", "FN", "fom",
     ]
 
     rows = []
@@ -341,7 +463,7 @@ def evaluate_all(models_dir, test_paths, output_csv):
             print(f"  Skipping {model_name} — no test path for dataset '{dataset}'")
             continue
 
-        test_files = glob.glob(os.path.join(test_dir, "*.npy"))
+        test_files = sorted(glob.glob(os.path.join(test_dir, "*.npy")))
         if not test_files:
             print(f"  Skipping {model_name} — no .npy files in {test_dir}")
             continue
@@ -384,34 +506,38 @@ def evaluate_all(models_dir, test_paths, output_csv):
                     preds_list.append(pred[i])
                     targets_list.append(tgt[i])
 
-        metrics, _ = eval_metrics(targets_list, preds_list)
         epochs_trained = sum(len(v) for v in config["epoch_losses"].values())
+        model_meta = {
+            "model_name":     model_name,
+            "experiment":     exp_num,
+            "model_type":     config["model_type"],
+            "encoder":        config["encoder"],
+            "pretrained":     config.get("pretrained", "none"),
+            "freeze_encoder": config.get("freeze_encoder", False),
+            "augmentation":   config.get("augmentation", "none"),
+            "optimizer":      config["optimizer"],
+            "best_lr":        config["best_lr"],
+            "best_loss":      config["best_loss"],
+            "epochs_trained": epochs_trained,
+            "satellite":      config["satellite"],
+            "n_params":       n_params,
+        }
 
-        rows.append({
-            "model_name":       model_name,
-            "experiment":       exp_num,
-            "model_type":       config["model_type"],
-            "encoder":          config["encoder"],
-            "pretrained":       config.get("pretrained", "none"),
-            "freeze_encoder":   config.get("freeze_encoder", False),
-            "augmentation":     config.get("augmentation", "none"),
-            "optimizer":        config["optimizer"],
-            "best_lr":          config["best_lr"],
-            "best_loss":        config["best_loss"],
-            "epochs_trained":   epochs_trained,
-            "satellite":        config["satellite"],
-            "n_params":         n_params,
-            **metrics,
-        })
+        TPs, TNs, FPs, FNs = confusion_metrics_per_image(targets_list, preds_list)
+        foms = fom_per_image(targets_list, preds_list)
+        for tp, tn, fp, fn, fom, path in zip(TPs, TNs, FPs, FNs, foms, test_files):
+            rows.append({**model_meta, "filename": os.path.basename(path),
+                         "TP": tp, "TN": tn, "FP": fp, "FN": fn, "fom": fom})
 
-        print(f"F1={metrics['f1']:.4f}  FoM={metrics['fom']:.4f}")
+        mean_fom = np.nanmean(foms)
+        print(f"FoM={mean_fom:.4f}  ({len(foms)} images)")
 
     with open(output_csv, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"\nResults written to {output_csv} ({len(rows)} models evaluated)")
+    print(f"\nResults written to {output_csv} ({len(rows)} rows)")
 
 
 
@@ -428,25 +554,29 @@ _DATASET_META = {
 }
 
 
-def evaluate_index_method(test_paths, output_csv, index="MNDWI", threshold="otsu"):
+def evaluate_index_method(test_paths, output_csv, index="NDWI", fixed_thresholds=None):
     """
-    Evaluate a spectral index + threshold baseline across datasets and write a CSV.
+    Evaluate a spectral index using both fixed threshold and Otsu's method across datasets.
 
-    test_paths : dict mapping dataset name to its test directory of .npy files
-                 e.g. {"LICS": "/data/LICS/test", "SWED": "data/SWED/test", ...}
-    output_csv : path to write the results CSV
-    index      : any spyndex-supported index name (default "MNDWI")
-    threshold  : "otsu" for Otsu's method, or a float for a fixed cutoff
+    Writes one row per (method × dataset × image) with raw TP, TN, FP, FN and FOM —
+    matching the format of evaluate_all.
+
+    test_paths        : dict mapping dataset name to its test directory of .npy files
+    output_csv        : path to write the results CSV
+    index             : spectral index name passed to utils.get_index (default "NDWI")
+    fixed_thresholds  : dict mapping dataset name to a fixed threshold float.
+                        If None or a dataset is missing, only Otsu method is run for that dataset.
     """
     import csv
     import glob
     import numpy as np
-    from utils import predict_index
-    from evaluation import eval_metrics
+    from skimage.filters import threshold_otsu
+    from utils import get_index, get_threshold, edge_from_mask
+    from evaluation import confusion_metrics, calc_fom
 
     fieldnames = [
-        "dataset", "satellite", "index", "threshold",
-        "accuracy", "balanced_accuracy", "precision", "recall", "f1", "mse", "fom",
+        "model_name", "model_type", "dataset", "satellite", "index", "threshold",
+        "filename", "TP", "TN", "FP", "FN", "fom",
     ]
 
     rows = []
@@ -456,44 +586,67 @@ def evaluate_index_method(test_paths, output_csv, index="MNDWI", threshold="otsu
             print(f"  Skipping {dataset} — no metadata entry in _DATASET_META")
             continue
 
-        test_files = glob.glob(os.path.join(test_dir, "*.npy"))
+        test_files = sorted(glob.glob(os.path.join(test_dir, "*.npy")))
         if not test_files:
             print(f"  Skipping {dataset} — no .npy files in {test_dir}")
             continue
 
         satellite  = meta["satellite"]
         target_pos = meta["target_pos"]
-        print(f"  Evaluating index={index} on {dataset} ({len(test_files)} images)...")
 
-        targets_list, preds_list = [], []
-        for path in test_files:
-            arr = np.load(path)
-            tgt = arr[:, :, target_pos].astype(int)
-            tgt[tgt == -1] = 0
+        fixed_t = fixed_thresholds.get(dataset) if fixed_thresholds else None
+        methods = []
+        if fixed_t is not None:
+            methods.append(("fixed", fixed_t))
+        methods.append(("otsu", None))
 
-            # get_index selects the relevant spectral bands internally,
-            # so the full array can be passed directly
-            pred = predict_index(arr, satellite=satellite, index=index, threshold=threshold)
+        for method_name, fixed_val in methods:
+            model_type = f"{index}_{method_name}"
+            print(f"  Evaluating {model_type} on {dataset} ({len(test_files)} images)...")
 
-            targets_list.append(tgt)
-            preds_list.append(pred)
+            method_foms = []
+            for path in test_files:
+                arr = np.load(path)
+                tgt = arr[:, :, target_pos].astype(int)
+                tgt[tgt == -1] = 0
 
-        metrics, _ = eval_metrics(targets_list, preds_list)
+                idx = get_index(arr, satellite=satellite, index=index)
+                if fixed_val is not None:
+                    t = fixed_val
+                else:
+                    valid = idx[np.isfinite(idx)]
+                    t = float(threshold_otsu(valid)) if len(valid) > 0 else 0.0
+                pred = get_threshold(idx, t)
 
-        rows.append({
-            "dataset":   dataset,
-            "satellite": satellite,
-            "index":     index,
-            "threshold": threshold,
-            **metrics,
-        })
+                TP, TN, FP, FN = confusion_metrics(tgt, pred)
+                target_edge = edge_from_mask(tgt)
+                pred_edge   = edge_from_mask(pred)
+                fom = calc_fom(target_edge, pred_edge)
+
+                method_foms.append(fom)
+
+                dataset = dataset.split("_")[0]  # e.g. "SWED" from "SWED_processed"
+
+                rows.append({
+                    "model_name": f"{dataset}_{model_type}",
+                    "model_type": model_type,
+                    "dataset":    dataset,  # e.g. "SWED" from "SWED_processed"
+                    "satellite":  satellite,
+                    "index":      index,
+                    "threshold":  t,
+                    "filename":   os.path.basename(path),
+                    "TP": int(TP), "TN": int(TN), "FP": int(FP), "FN": int(FN),
+                    "fom": fom,
+                })
+
+            print(f"  FoM={np.nanmean(method_foms):.4f}")
 
     with open(output_csv, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"\nResults written to {output_csv} ({len(rows)} datasets evaluated)")
+    print(f"\nResults written to {output_csv} ({len(rows)} rows)")
 
 
 # ---------------------------------------------------------
@@ -513,13 +666,23 @@ def main():
     parser.add_argument("--save_path",     type=str, default=None,
                         help="Directory to save models and configs")
     parser.add_argument("--experiment",    type=str,
-                        choices=["1", "2", "3"],
+                        choices=["1", "2", "3", "4"],
                         default=None,
                         help="Run a specific experiment. Omit to run all.")
     parser.add_argument("--exp1_dataset",  type=str,
                         choices=list(_EXP1_DATASETS),
                         default=None,
                         help="(Experiment 1 only) Run a single dataset. Omit to run all four.")
+    parser.add_argument("--exp4_dataset",    type=str,
+                        choices=list(_EXP4_DATASETS),
+                        default=None,
+                        help="(Experiment 4 only) Run a single dataset. Omit to run both.")
+    parser.add_argument("--exp4_models_dir", type=str, default=None,
+                        help="(Experiment 4 only) Directory containing exp2 .pth files used as fine-tuning starting points")
+    parser.add_argument("--exp4_groups",    type=str, nargs="+",
+                        choices=list(_EXP4_GROUPS),
+                        default=None,
+                        help="(Experiment 4 only) Groups to run: unet imagenet bigearthnet. Omit to run all three.")
     parser.add_argument("--exp2_dataset",   type=str,
                         choices=list(_EXP2_DATASETS),
                         default=None,
@@ -535,6 +698,10 @@ def main():
     # Evaluation mode
     parser.add_argument("--evaluate",      action="store_true",
                         help="Evaluate all models in --models_dir and write a CSV")
+    parser.add_argument("--evaluate_index", action="store_true",
+                        help="Evaluate a spectral index baseline (fixed + Otsu) and write a CSV")
+    parser.add_argument("--index",         type=str, default="NDWI",
+                        help="Spectral index to evaluate with --evaluate_index (default: NDWI)")
     parser.add_argument("--models_dir",    type=str, default=None,
                         help="Directory of saved .pth/.json models (required for --evaluate)")
     parser.add_argument("--lics_test",     type=str, default=None,
@@ -550,16 +717,30 @@ def main():
 
     args = parser.parse_args()
 
+    test_paths = {k: v for k, v in {
+        "LICS":             args.lics_test,
+        "SWED":             args.swed_test,
+        "SANet_processed":  args.sanet_test,
+        "TCUNet_processed": args.tcunet_test,
+    }.items() if v is not None}
+
     if args.evaluate:
         if args.models_dir is None:
             parser.error("--models_dir is required for --evaluate")
-        test_paths = {k: v for k, v in {
-            "LICS":             args.lics_test,
-            "SWED":             args.swed_test,
-            "SANet_processed":  args.sanet_test,
-            "TCUNet_processed": args.tcunet_test,
-        }.items() if v is not None}
         evaluate_all(args.models_dir, test_paths, args.output_csv)
+        return
+
+    if args.evaluate_index:
+        evaluate_index_method(
+            test_paths, args.output_csv,
+            index=args.index,
+            fixed_thresholds={
+                "LICS":             -0.11,
+                "SWED":             -0.03,
+                "SANet_processed":   0.370,
+                "TCUNet_processed": -0.07,
+            },
+        )
         return
 
     if args.save_path is None:
@@ -567,11 +748,14 @@ def main():
 
     needs_train   = args.experiment in (None, "2")
     needs_scratch = args.experiment in (None, "1", "2")
+    needs_exp4    = args.experiment == "4"
 
     if needs_train and args.train_path is None:
         parser.error("--train_path is required for this experiment")
     if args.experiment in (None, "3") and args.finetune_path is None and args.swed_finetune_path is None:
         parser.error("--finetune_path and/or --swed_finetune_path is required for experiment 3")
+    if needs_exp4 and args.exp4_models_dir is None:
+        parser.error("--exp4_models_dir is required for experiment 4")
     if needs_scratch and args.scratch_path is None:
         parser.error("--scratch_path is required for this experiment")
 
@@ -598,6 +782,17 @@ def main():
                                overrides={"satellite": "sentinel",
                                           "incl_bands": "[1,2,3,4,5,6,7,8,9,10,11,12]",
                                           "batch_size": 8})
+
+    if exp == "4":
+        if args.scratch_path is None:
+            parser.error("--scratch_path is required for experiment 4")
+        exp4_finetuning(
+            args.scratch_path,
+            args.save_path,
+            args.exp4_models_dir,
+            dataset=args.exp4_dataset,
+            groups=args.exp4_groups,
+        )
 
 
 if __name__ == "__main__":
