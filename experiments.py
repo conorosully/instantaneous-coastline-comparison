@@ -375,6 +375,97 @@ def exp4_finetuning(scratch_path, save_path, exp2_models_dir,
 
 
 # ---------------------------------------------------------
+# Experiment 5 — Reduced band-subset comparison
+#
+# Fixed U-Net, geometric augmentation only, optimizer sweep
+# (adam, adamw, sgd) across datasets, each restricted to a
+# dataset-specific pair of bands. LICS and SWED train on
+# their finetune splits (like experiment 4); SANet_processed
+# and TCUNet_processed train on their standard train splits.
+# ---------------------------------------------------------
+
+_EXP5_DATASETS = ("LICS", "SWED", "SANet_processed", "TCUNet_processed")
+
+# incl_bands strings are 1-indexed band numbers (train.py subtracts 1),
+# per band_dic in utils.py.
+_EXP5_BANDS = {
+    "LICS":             "[4,5]",   # NIR, SWIR1  (landsat)
+    "SWED":             "[8,11]",  # NIR, SWIR1  (sentinel)
+    "SANet_processed":  "[4,3]",   # NIR, RED    (gaofen1)
+    "TCUNet_processed": "[4,6]",   # NIR, RedEdge2 (gaofen6)
+}
+
+
+def _exp5_dataset_config(dataset, scratch_path):
+    """Return dataset-specific config overrides for experiment 5."""
+    if dataset == "LICS":
+        return {
+            "train_path":     os.path.join(scratch_path, "LICS", "finetune"),
+            "satellite":      "landsat",
+            "incl_bands":     _EXP5_BANDS["LICS"],
+            "early_stopping": 10,
+            "split":          0.8,
+        }
+    if dataset == "SWED":
+        return {
+            "train_path":     os.path.join(scratch_path, "SWED", "swed_finetune"),
+            "satellite":      "sentinel",
+            "incl_bands":     _EXP5_BANDS["SWED"],
+            "early_stopping": 10,
+            "split":          0.8,
+        }
+    if dataset == "SANet_processed":
+        return {
+            "train_path":     os.path.join(scratch_path, "SANet_processed", "train"),
+            "valid_path":     os.path.join(scratch_path, "SANet_processed", "valid"),
+            "satellite":      "gaofen1",
+            "incl_bands":     _EXP5_BANDS["SANet_processed"],
+            "early_stopping": 20,
+        }
+    if dataset == "TCUNet_processed":
+        return {
+            "train_path":     os.path.join(scratch_path, "TCUNet_processed", "train"),
+            "satellite":      "gaofen6",
+            "incl_bands":     _EXP5_BANDS["TCUNet_processed"],
+            "early_stopping": 20,
+            "batch_size":     4,   # Gaofen-6 tiles are large; 8 OOMs even for plain UNet
+        }
+    raise ValueError(f"Unknown dataset: {dataset}")
+
+
+def exp5_band_subset(scratch_path, save_path, dataset=None):
+    """
+    Experiment 5: U-Net on a reduced, dataset-specific band subset.
+
+    dataset : one of _EXP5_DATASETS, or None to run all four.
+    """
+    print("\n" + "=" * 65)
+    print("Experiment 5: Reduced Band-Subset Comparison")
+    if dataset:
+        print(f"  dataset  : {dataset}")
+    print("=" * 65)
+
+    datasets   = [dataset] if dataset else list(_EXP5_DATASETS)
+    optimizers = ["adam", "adamw", "sgd"]
+
+    for ds in datasets:
+        ds_cfg = _exp5_dataset_config(ds, scratch_path)
+        for opt in optimizers:
+            model_name = f"{ds}_unet_bands_{opt}"
+            print(f"\n  {model_name}")
+            run_experiment({
+                **_base(ds_cfg["train_path"], save_path),
+                **ds_cfg,
+                "model_name":     model_name,
+                "model_type":     "unet",
+                "augmentation":   "geometric",
+                "optimizer":      opt,
+                "lr":             [0.1, 0.01, 0.001],
+                "experiment_tag": 5,
+            })
+
+
+# ---------------------------------------------------------
 # Evaluate all saved models → CSV
 # ---------------------------------------------------------
 
@@ -403,21 +494,22 @@ def _experiment_number(config):
     return 2 if stem in architectures else 3
 
 
-def evaluate_all(models_dir, test_paths, output_csv):
+def evaluate_all(models_dir, test_paths, output_csv, experiments=None):
     """
     Run evaluation for every model in models_dir and write per-image results to a CSV.
 
     One row per (model × image) with raw TP, TN, FP, FN and FOM.
     Metrics can be computed from these values in a subsequent step.
 
-    models_dir : parent directory containing per-experiment subdirectories
-                 (exp1/, exp2/, exp3/, …).
-    test_paths : dict mapping dataset name to its test directory
-                 e.g. {"LICS": "data/LICS/test",
-                        "SWED": "data/SWED/test",
-                        "SANet_processed": "data/SANet_processed/test",
-                        "TCUNet_processed": "data/TCUNet_processed/test"}
-    output_csv : path to write the results CSV
+    models_dir  : parent directory containing per-experiment subdirectories
+                  (exp1/, exp2/, exp3/, …).
+    test_paths  : dict mapping dataset name to its test directory
+                  e.g. {"LICS": "data/LICS/test",
+                         "SWED": "data/SWED/test",
+                         "SANet_processed": "data/SANet_processed/test",
+                         "TCUNet_processed": "data/TCUNet_processed/test"}
+    output_csv  : path to write the results CSV
+    experiments : list of experiment numbers to evaluate (e.g. [4]), or None to run all
     """
     import csv
     import json
@@ -430,11 +522,13 @@ def evaluate_all(models_dir, test_paths, output_csv):
 
     device = get_device()
 
-    # Collect (json_path, model_dir, exp_num) from all exp*/ subdirectories,
-    # sorted so results are grouped by experiment then model name.
+    # Collect (json_path, model_dir, exp_num) from exp*/ subdirectories,
+    # optionally filtered to a subset of experiment numbers.
+    exp_filter = set(experiments) if experiments else None
     exp_dirs = sorted(
         e.path for e in os.scandir(models_dir)
         if e.is_dir() and e.name.startswith("exp") and e.name[3:].isdigit()
+        and (exp_filter is None or int(e.name[3:]) in exp_filter)
     )
     entries = [
         (json_path, exp_dir, int(os.path.basename(exp_dir)[3:]))
@@ -602,9 +696,10 @@ def evaluate_index_method(test_paths, output_csv, index="NDWI", fixed_thresholds
 
         for method_name, fixed_val in methods:
             model_type = f"{index}_{method_name}"
-            print(f"  Evaluating {model_type} on {dataset} ({len(test_files)} images)...")
+            print(f"  Evaluating {model_type} with threshold {fixed_val} on {dataset} ({len(test_files)} images)...")
 
             method_foms = []
+            
             for path in test_files:
                 arr = np.load(path)
                 tgt = arr[:, :, target_pos].astype(int)
@@ -666,7 +761,7 @@ def main():
     parser.add_argument("--save_path",     type=str, default=None,
                         help="Directory to save models and configs")
     parser.add_argument("--experiment",    type=str,
-                        choices=["1", "2", "3", "4"],
+                        choices=["1", "2", "3", "4", "5"],
                         default=None,
                         help="Run a specific experiment. Omit to run all.")
     parser.add_argument("--exp1_dataset",  type=str,
@@ -694,6 +789,10 @@ def main():
                         help="(Experiment 2 only) List of architectures to run, e.g. --exp2_models unet swed_unet att_unet")
     exp2_model_group.add_argument("--exp2_all_models", action="store_true",
                         help="(Experiment 2 only) Run all architectures (default if neither flag is given)")
+    parser.add_argument("--exp5_dataset",   type=str,
+                        choices=list(_EXP5_DATASETS),
+                        default=None,
+                        help="(Experiment 5 only) Run a single dataset. Omit to run all four.")
 
     # Evaluation mode
     parser.add_argument("--evaluate",      action="store_true",
@@ -704,6 +803,9 @@ def main():
                         help="Spectral index to evaluate with --evaluate_index (default: NDWI)")
     parser.add_argument("--models_dir",    type=str, default=None,
                         help="Directory of saved .pth/.json models (required for --evaluate)")
+    parser.add_argument("--eval_experiments", type=int, nargs="+",
+                        default=None, metavar="N",
+                        help="(--evaluate only) Restrict evaluation to these experiment numbers, e.g. --eval_experiments 4")
     parser.add_argument("--lics_test",     type=str, default=None,
                         help="Path to LICS test set (.npy files)")
     parser.add_argument("--swed_test",     type=str, default=None,
@@ -727,7 +829,8 @@ def main():
     if args.evaluate:
         if args.models_dir is None:
             parser.error("--models_dir is required for --evaluate")
-        evaluate_all(args.models_dir, test_paths, args.output_csv)
+        evaluate_all(args.models_dir, test_paths, args.output_csv,
+                     experiments=args.eval_experiments)
         return
 
     if args.evaluate_index:
@@ -736,18 +839,18 @@ def main():
             index=args.index,
             fixed_thresholds={
                 "LICS":             -0.11,
-                "SWED":             -0.03,
-                "SANet_processed":   0.370,
-                "TCUNet_processed": -0.07,
+                "SWED":             -0.01,
+                "SANet_processed":   0.34,
+                "TCUNet_processed":  -0.01,
             },
         )
-        return
+        return 
 
     if args.save_path is None:
         parser.error("--save_path is required for training")
 
     needs_train   = args.experiment in (None, "2")
-    needs_scratch = args.experiment in (None, "1", "2")
+    needs_scratch = args.experiment in (None, "1", "2", "5")
     needs_exp4    = args.experiment == "4"
 
     if needs_train and args.train_path is None:
@@ -793,6 +896,10 @@ def main():
             dataset=args.exp4_dataset,
             groups=args.exp4_groups,
         )
+
+    if exp == "5":
+        exp5_band_subset(args.scratch_path, args.save_path,
+                          dataset=args.exp5_dataset)
 
 
 if __name__ == "__main__":

@@ -147,9 +147,10 @@ def load_dataset(name, path, sample=None, overrides=None):
     sample    : if set, randomly select this many files (reproducible seed)
     overrides : dict of config keys to override, e.g. {"target_pos": -1}
 
-    Returns: inputs  — list of (H, W, C) raw band arrays
-             targets — list of (H, W) int mask arrays
+    Returns: inputs    — list of (H, W, C) raw band arrays
+             targets   — list of (H, W) int mask arrays
              satellite — satellite string for this dataset
+             filenames — list of bare filenames (e.g. "second_28.npy")
     """
     cfg        = {**DATASET_CONFIG[name], **(overrides or {})}
     incl_bands = cfg["incl_bands"]
@@ -162,10 +163,11 @@ def load_dataset(name, path, sample=None, overrides=None):
 
     data  = [np.load(f) for f in files]
 
-    inputs  = [d[:, :, incl_bands] for d in data]
-    targets = [np.where(d[:, :, target_pos] == -1, 0, d[:, :, target_pos]).astype(int) for d in data]
+    inputs    = [d[:, :, incl_bands] for d in data]
+    targets   = [np.where(d[:, :, target_pos] == -1, 0, d[:, :, target_pos]).astype(int) for d in data]
+    filenames = [os.path.basename(f) for f in files]
 
-    return inputs, targets, cfg["satellite"]
+    return inputs, targets, cfg["satellite"], filenames
 
 
 def load_all_datasets(paths, sample=None, overrides=None):
@@ -179,12 +181,12 @@ def load_all_datasets(paths, sample=None, overrides=None):
     overrides : dict mapping dataset name to config overrides
                 e.g. {"LICS": {"target_pos": -1}}
 
-    Returns: dict {name: {"inputs": [...], "targets": [...], "satellite": "..."}}
+    Returns: dict {name: {"inputs": [...], "targets": [...], "satellite": "...", "filenames": [...]}}
     """
     overrides = overrides or {}
     return {
         name: dict(zip(
-            ("inputs", "targets", "satellite"),
+            ("inputs", "targets", "satellite", "filenames"),
             load_dataset(name, path, sample=sample, overrides=overrides.get(name)),
         ))
         for name, path in paths.items()

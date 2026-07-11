@@ -46,7 +46,6 @@ def calc_fom(ref_img, img, alpha=1.0 / 9.0):
 
     return fom
 
-
 def fom_per_image(targets, preds):
     """Return per-image TP, TN, FP, FN and FOM as a list of dicts."""
     FOM = []
@@ -99,9 +98,47 @@ def aggregate_metrics(TPs, TNs, FPs, FNs, foms=None):
                 fom_vals.append(f)
             elif fps[i] == 0 and fns[i] == 0:
                 fom_vals.append(1.0)
-            else:                
+            else:
                 fom_vals.append(0.0)
         a = np.array(fom_vals, dtype=float)
         result["fom"] = np.nan if len(a) == 0 else np.nanmean(a)
 
     return result
+
+
+def calculate_reporting_metrics(model_rows):
+    """Aggregate per-image rows for a single model into one reporting-metrics dict."""
+    rows = model_rows.copy().reset_index(drop=True)
+
+    model_name = rows['model_name'][0]
+    model_type = rows['model_type'][0]
+    dataset = rows['dataset'][0]
+    satellite = rows['satellite'][0]
+
+    if "NDWI" in model_type:
+        optimizer = "N/A"
+        n_params = 0
+        augmentation = "N/A"
+    else:
+        optimizer = rows['optimizer'][0]
+        n_params = rows['n_params'][0]
+        augmentation = rows['augmentation'][0]
+
+    TP = rows['TP']
+    TN = rows['TN']
+    FP = rows['FP']
+    FN = rows['FN']
+    FOM = rows['fom']
+
+    metrics = aggregate_metrics(TP, TN, FP, FN, FOM)
+
+    return {
+        "model_name": model_name,
+        "model_type": model_type,
+        "dataset": dataset,
+        "satellite": satellite,
+        "optimizer": optimizer,
+        "n_params": n_params,
+        "augmentation": augmentation,
+        **metrics
+    }
