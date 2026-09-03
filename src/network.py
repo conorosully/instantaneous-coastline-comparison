@@ -7,6 +7,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import init
+import numpy as np
+import matplotlib.pyplot as plt
+
+import utils
+import evaluation
 
 
 # ---------------------------------------------------------
@@ -641,3 +646,68 @@ def load_model(model_name, models_dir, device=None):
     model.eval()
 
     return model, config
+
+
+def model_predict(model, bands, satellite):
+    """Run a loaded model on a single (H, W, C) band array and return the predicted label mask."""
+    from dataset import scale_bands
+
+    device = next(model.parameters()).device
+    scaled = scale_bands(bands.astype(np.float32), satellite=satellite)
+    tensor = torch.tensor(scaled.transpose(2, 0, 1)).unsqueeze(0).to(device)
+    with torch.no_grad():
+        pred = model(tensor).argmax(dim=1).squeeze().cpu().numpy()
+    return pred.astype(int)
+
+
+def show_prediction(datasets, model_name, filename, dataset, models_dir,
+                     mask_cmap=None, rgb_bands=None):
+    """Load a model, run it on one sample, and plot RGB / ground truth / prediction side by side."""
+    from matplotlib.colors import ListedColormap
+
+    if mask_cmap is None:
+        mask_cmap = ListedColormap(['saddlebrown', 'steelblue'])
+    if rgb_bands is None:
+        rgb_bands = {
+            'landsat':  (2, 1, 0),
+            'sentinel': (3, 2, 1),
+            'gaofen1':  (2, 1, 0),
+            'gaofen6':  (2, 1, 0),
+        }
+
+    ds        = datasets[dataset]
+    filenames = ds["filenames"]
+
+    if filename not in filenames:
+        raise ValueError(f"{filename!r} not found in {dataset}. Available: {filenames}")
+
+    idx       = filenames.index(filename)
+    img       = ds["inputs"][idx]
+    target    = ds["targets"][idx]
+    satellite = ds["satellite"]
+
+    model, _ = load_model(model_name, models_dir, device="mps")
+    pred = model_predict(model, img, satellite)
+
+    acc = np.mean(pred == target)
+    target_edge = utils.edge_from_mask(target)
+    pred_edge   = utils.edge_from_mask(pred)
+    fom = evaluation.calc_fom(target_edge, pred_edge)
+
+    r, g, b = rgb_bands[satellite]
+    rgb = utils.get_rgb(img, r=r, g=g, b=b, satellite=satellite)
+    rgb = utils.enhance_rgb(rgb, factor=1.5)
+
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    fig.suptitle(f"{model_name}  |  {dataset}  |  {filename}", fontsize=11)
+    axes[0].imshow(rgb)
+    axes[0].set_title("RGB")
+    axes[1].imshow(target, cmap=mask_cmap, vmin=0, vmax=1)
+    axes[1].set_title(f"Ground truth (mean={np.mean(target):.3f})")
+    axes[2].imshow(pred, cmap=mask_cmap, vmin=0, vmax=1)
+    axes[2].set_title(f"Prediction  (acc={acc:.3f}  fom={fom:.3f})")
+    for ax in axes:
+        ax.set_xticks([])
+        ax.set_yticks([])
+    plt.tight_layout()
+    plt.show()

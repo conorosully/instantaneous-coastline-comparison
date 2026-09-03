@@ -1,6 +1,7 @@
 from scipy.ndimage import distance_transform_edt
 
 import numpy as np
+import pandas as pd
 import utils
 
 def confusion_metrics(target, pred):
@@ -142,3 +143,53 @@ def calculate_reporting_metrics(model_rows):
         "augmentation": augmentation,
         **metrics
     }
+
+
+def add_metrics_to_rows(df):
+    """Compute accuracy/f1/iou/fom columns for a results dataframe of per-image confusion counts."""
+    df = df.copy()
+    df['accuracy'] = (df['TP'] + df['TN']) / (df['TP'] + df['TN'] + df['FP'] + df['FN'])
+
+    denom_f1 = 2 * df['TP'] + df['FP'] + df['FN']
+    df['f1'] = np.where(denom_f1 > 0, 2 * df['TP'] / denom_f1, 1.0)
+
+    denom_pos = df['TP'] + df['FP'] + df['FN']
+    denom_neg = df['TN'] + df['FP'] + df['FN']
+    df['pos_iou']  = np.where(denom_pos > 0, df['TP'] / denom_pos, 1.0)
+    df['neg_iou']  = np.where(denom_neg > 0, df['TN'] / denom_neg, 1.0)
+    df['mean_iou'] = (df['pos_iou'] + df['neg_iou']) / 2
+
+    FOM_ = []
+    for i, f in enumerate(df['fom']):
+        if not np.isnan(f):
+            FOM_.append(f)
+        elif df['FP'].iloc[i] + df['FN'].iloc[i] == 0:
+            FOM_.append(1.0)
+        else:
+            FOM_.append(0.0)
+    df['fom'] = FOM_
+
+    return df
+
+
+def aggregate_experiment_metrics(model_results, experiment, extra_cols=None):
+    """Aggregate per-image rows into one reporting-metrics row per model for a given experiment.
+
+    model_results : the full per-image results dataframe
+    experiment    : experiment number to filter on
+    extra_cols    : optional column names to carry over from each model's first row
+                     (e.g. encoder/pretrained/freeze_encoder for Exp4)
+    """
+    results = model_results[model_results['experiment'] == experiment]
+
+    metrics_list = []
+    for model_name in results['model_name'].unique():
+        model_rows = results[results['model_name'] == model_name]
+        metrics = calculate_reporting_metrics(model_rows)
+        if extra_cols:
+            row0 = model_rows.iloc[0]
+            for col in extra_cols:
+                metrics[col] = row0[col]
+        metrics_list.append(metrics)
+
+    return pd.DataFrame(metrics_list)
